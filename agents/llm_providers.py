@@ -1,8 +1,11 @@
 """
 LLM provider abstraction layer.
 Supports: Google Gemini, Groq, OpenRouter.
-Round-robins across multiple API keys with proper 429 rate limit handling.
-429 errors trigger exponential backoff WITHOUT consuming quota.
+
+Strategy: health-check-first, then only use alive providers.
+- At startup, each provider is tested with 1 tiny call (no retries)
+- Dead providers are BLOCKED — zero wasted calls or backoff time
+- Alive providers get round-robin key rotation + light retry (2 attempts max)
 """
 
 import json
@@ -18,8 +21,8 @@ from config.settings import (
 
 class RateLimiter:
     """
-    Pre-emptive rate limiter that throttles BEFORE making calls.
-    Keeps a sliding window of timestamps and sleeps if at capacity.
+    Pre-emptive rate limiter using a sliding window of timestamps.
+    Sleeps if at capacity before making the call.
     """
 
     def __init__(self, rpm_limit: int):
@@ -28,14 +31,11 @@ class RateLimiter:
         self.lock = threading.Lock()
 
     def acquire(self):
-        """Wait until we're safely under the rate limit, then record the call."""
         with self.lock:
             now = time.time()
-            # Purge timestamps older than 60s
             self.timestamps = [t for t in self.timestamps if now - t < 60]
 
             if len(self.timestamps) >= self.rpm_limit:
-                # Wait until the oldest call falls out of the window
                 sleep_time = 60 - (now - self.timestamps[0]) + 1.0
                 if sleep_time > 0:
                     print(f"[RateLimit] Throttling for {sleep_time:.1f}s (at {self.rpm_limit} RPM limit)")
@@ -44,26 +44,24 @@ class RateLimiter:
             self.timestamps.append(time.time())
 
     def backoff_after_429(self, attempt: int):
-        """
-        Called when a 429 is received. Does NOT count as a used request.
-        Exponential backoff: 4s, 8s, 16s, 32s.
-        """
-        wait = min(10 * (2 ** attempt), 120)  # 10s, 20s, 40s, 80s, 120s
-        print(f"[RateLimit] 429 received — backing off {wait}s (attempt {attempt + 1})")
+        """Short backoff: 5s, 10s. We already know the provider is alive."""
+        wait = min(5 * (2 ** attempt), 15)  # 5s, 10s, 15s max
+        print(f"[RateLimit] 429 — backing off {wait}s (attempt {attempt + 1})")
         time.sleep(wait)
 
 
 class LLMPool:
     """
     Manages multiple API keys across Gemini, Groq, and OpenRouter.
-    Features:
-    - Round-robin key rotation
-    - Pre-emptive rate limiting (never hits 429 under normal conditions)
-    - 429 exponential backoff with retry (no quota wasted)
-    - Automatic fallback chain: preferred → next → next
+
+    Health-check-first strategy:
+    1. check_provider_health() tests each provider once at startup
+    2. Only alive providers are used — dead ones are skipped instantly
+    3. Max 2 retries per provider (not 5) since we know they're alive
+    4. Short backoff (5s/10s) instead of 10s→120s
     """
 
-    MAX_RETRIES = 5
+    MAX_RETRIES = 2  # Light retry — we already know the provider works
 
     def __init__(self):
         self._gemini_idx = 0
@@ -74,6 +72,20 @@ class LLMPool:
         self._gemini_limiters = {k: RateLimiter(GEMINI_RPM_PER_KEY) for k in GEMINI_API_KEYS}
         self._groq_limiters = {k: RateLimiter(GROQ_RPM_PER_KEY) for k in GROQ_API_KEYS}
         self._openrouter_limiter = RateLimiter(OPENROUTER_RPM)
+
+        # Alive providers — set by check_provider_health()
+        # None means "not checked yet" (will try all); empty set means "all dead"
+        self._alive_providers: set | None = None
+
+    def set_alive_providers(self, alive: list[str]):
+        """Called after health check to lock in which providers to use."""
+        self._alive_providers = set(alive)
+
+    def _is_alive(self, provider: str) -> bool:
+        """Check if provider passed health check. If no check done, allow all."""
+        if self._alive_providers is None:
+            return True  # No health check run yet, try everything
+        return provider in self._alive_providers
 
     def _next_gemini_key(self) -> str | None:
         with self._lock:
@@ -94,7 +106,6 @@ class LLMPool:
     # ── Gemini ────────────────────────────────────────────────────────────────
 
     def call_gemini(self, prompt: str, system_instruction: str = "") -> str:
-        """Call Gemini with rate limiting and 429 retry."""
         for attempt in range(self.MAX_RETRIES):
             key = self._next_gemini_key()
             if not key:
@@ -107,14 +118,13 @@ class LLMPool:
                 from google import genai
 
                 client = genai.Client(api_key=key)
-                contents = prompt
                 config = {"temperature": 0.7, "max_output_tokens": 4096}
                 if system_instruction:
                     config["system_instruction"] = system_instruction
 
                 response = client.models.generate_content(
                     model=GEMINI_MODEL,
-                    contents=contents,
+                    contents=prompt,
                     config=config,
                 )
                 return response.text
@@ -123,15 +133,14 @@ class LLMPool:
                 err_str = str(e).lower()
                 if "429" in err_str or "resource_exhausted" in err_str or "rate" in err_str:
                     limiter.backoff_after_429(attempt)
-                    continue  # Retry with next key
-                raise  # Non-rate-limit error, bubble up
+                    continue
+                raise
 
         raise RuntimeError(f"Gemini: exhausted {self.MAX_RETRIES} retries due to rate limits")
 
     # ── Groq ──────────────────────────────────────────────────────────────────
 
     def call_groq(self, prompt: str, system_instruction: str = "") -> str:
-        """Call Groq with rate limiting and 429 retry."""
         for attempt in range(self.MAX_RETRIES):
             key = self._next_groq_key()
             if not key:
@@ -169,7 +178,6 @@ class LLMPool:
     # ── OpenRouter ────────────────────────────────────────────────────────────
 
     def call_openrouter(self, prompt: str, system_instruction: str = "") -> str:
-        """Call OpenRouter (free models) with rate limiting and 429 retry."""
         if not OPENROUTER_API_KEY:
             raise RuntimeError("No OpenRouter API key configured")
 
@@ -220,18 +228,17 @@ class LLMPool:
 
         raise RuntimeError(f"OpenRouter: exhausted {self.MAX_RETRIES} retries due to rate limits")
 
-    # ── Quick Provider Health Check ────────────────────────────────────────
+    # ── Quick Health Check (1 call per provider, no retries) ──────────────
 
     def check_provider_health(self) -> dict:
         """
-        Quick single-attempt test of each provider. Returns dict of {provider: bool}.
-        Does NOT retry on 429 — just marks as down immediately.
+        Test each provider with 1 tiny call. No retries.
+        Returns {provider: True/False} and sets internal alive list.
         """
         results = {}
         test_prompt = "Reply with exactly one word: OK"
-        test_sys = "You are a test bot. Reply with one word only."
 
-        # Test Gemini — single attempt, no retry
+        # Test Gemini
         try:
             key = self._next_gemini_key()
             if not key:
@@ -247,7 +254,7 @@ class LLMPool:
         except Exception:
             results["gemini"] = False
 
-        # Test Groq — single attempt
+        # Test Groq
         try:
             key = self._next_groq_key()
             if not key:
@@ -264,13 +271,12 @@ class LLMPool:
         except Exception:
             results["groq"] = False
 
-        # Test OpenRouter — single attempt
+        # Test OpenRouter
         try:
             if not OPENROUTER_API_KEY:
                 results["openrouter"] = False
             else:
-                import requests as req
-                resp = req.post(
+                resp = requests.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={
                         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -287,59 +293,19 @@ class LLMPool:
         except Exception:
             results["openrouter"] = False
 
+        # Lock in alive providers
+        alive = [p for p, ok in results.items() if ok]
+        self.set_alive_providers(alive)
         return results
 
-    # ── Provider Health Tracking ─────────────────────────────────────────────
-
-    def __init_health(self):
-        """Track which providers are healthy vs temporarily down."""
-        if not hasattr(self, "_health"):
-            self._health = {
-                "gemini": {"failures": 0, "last_fail": 0},
-                "groq": {"failures": 0, "last_fail": 0},
-                "openrouter": {"failures": 0, "last_fail": 0},
-            }
-
-    def _mark_failed(self, provider: str):
-        self.__init_health()
-        self._health[provider]["failures"] += 1
-        self._health[provider]["last_fail"] = time.time()
-
-    def _mark_success(self, provider: str):
-        self.__init_health()
-        self._health[provider]["failures"] = 0
-
-    def _get_provider_order(self, prefer: str) -> list:
-        """
-        Smart ordering: preferred first, then sort remaining by health.
-        Providers that failed recently go to the back.
-        Providers that haven't been tried in 5+ min get a second chance.
-        """
-        self.__init_health()
-        now = time.time()
-
-        providers = ["gemini", "groq", "openrouter"]
-        # Reset health if last failure was >5 min ago (give them another chance)
-        for p in providers:
-            if now - self._health[p]["last_fail"] > 300:
-                self._health[p]["failures"] = 0
-
-        # Build order: preferred first, then healthiest
-        order = [prefer]
-        remaining = [p for p in providers if p != prefer]
-        remaining.sort(key=lambda p: self._health[p]["failures"])
-        order.extend(remaining)
-        return order
-
-    # ── Unified Call with Smart Fallback ──────────────────────────────────────
+    # ── Unified Call — Only Uses Alive Providers ──────────────────────────
 
     def call_llm(self, prompt: str, system_instruction: str = "",
                  prefer: str = "groq") -> str:
         """
-        Call LLM with smart fallback chain.
-        - Routes to preferred provider first
-        - Falls back to healthiest remaining provider
-        - Tracks provider health to avoid hammering dead providers
+        Call LLM using ONLY providers that passed health check.
+        - Preferred provider first, then fallback to other alive ones
+        - Dead providers are skipped instantly (no call, no wait)
         """
         all_providers = {
             "gemini": self.call_gemini,
@@ -347,24 +313,30 @@ class LLMPool:
             "openrouter": self.call_openrouter,
         }
 
-        order = self._get_provider_order(prefer)
+        # Build order: prefer first, then other alive providers
+        order = [prefer]
+        for p in ["gemini", "groq", "openrouter"]:
+            if p != prefer:
+                order.append(p)
+
+        # Filter to alive only
+        order = [p for p in order if self._is_alive(p)]
+
+        if not order:
+            raise RuntimeError("No LLM providers are alive. Run health check or wait for rate limits to reset.")
 
         last_error = None
         for provider_name in order:
-            fn = all_providers.get(provider_name)
-            if not fn:
-                continue
+            fn = all_providers[provider_name]
             try:
                 result = fn(prompt, system_instruction)
-                self._mark_success(provider_name)
                 return result
             except Exception as e:
-                self._mark_failed(provider_name)
                 last_error = e
-                print(f"[LLM] {provider_name} failed: {e}, trying next provider...")
+                print(f"[LLM] {provider_name} failed: {e}, trying next...")
                 continue
 
-        raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
+        raise RuntimeError(f"All alive LLM providers failed. Last error: {last_error}")
 
 
 # Singleton pool

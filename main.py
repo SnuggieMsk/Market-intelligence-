@@ -17,7 +17,7 @@ from rich.panel import Panel
 from config.settings import SCAN_INTERVAL_MINUTES
 from data.database import init_db
 from scanner.scanner import scan_market
-from agents.executor import run_agents_on_all_stocks
+from agents.executor import run_agents_on_all_stocks, run_health_check
 from aggregator.synthesizer import aggregate_all
 
 console = Console()
@@ -35,6 +35,17 @@ def print_banner():
 def run_pipeline():
     """Run the full scan → analyze → aggregate pipeline."""
     start = time.time()
+
+    # Step 0: Health check — find which LLM providers are alive
+    alive = run_health_check()
+    if not alive:
+        console.print("[bold red]No LLM providers available. Aborting.[/bold red]")
+        console.print("[dim]Wait for rate limits to reset, or check your API keys in .env[/dim]")
+        return
+
+    agent_count = 36
+    console.print(f"\n[bold]Ready: {len(alive)} provider(s) alive → "
+                  f"{agent_count} agents will use {', '.join(alive)}[/bold]")
 
     # Step 1: Scan the market
     console.print("\n[bold]STEP 1/3: Scanning Market[/bold]")
@@ -65,8 +76,9 @@ def run_pipeline():
 
 
 def run_continuous():
-    """Run pipeline on a schedule."""
-    console.print(f"[bold]Running continuously every {SCAN_INTERVAL_MINUTES} minutes[/bold]")
+    """Run pipeline on a daily schedule."""
+    hours = SCAN_INTERVAL_MINUTES / 60
+    console.print(f"[bold]Running continuously every {hours:.0f} hours[/bold]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
     while True:

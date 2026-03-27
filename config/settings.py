@@ -23,7 +23,7 @@ CURRENCY_SYMBOL = "₹"
 EXCHANGE_SUFFIX = ".NS"             # .NS for NSE, .BO for BSE
 
 # ── Scanner Settings ──────────────────────────────────────────────────────────
-SCAN_INTERVAL_MINUTES = 30          # How often to run the full scan
+SCAN_INTERVAL_MINUTES = 1440         # Once per day (24 hours)
 TOP_STOCKS_TO_ANALYZE = 5           # Start small: 5 stocks x 36 agents = 180 calls
 MIN_MARKET_CAP = 5_000_000_000     # ₹500 Cr minimum (~₹5B)
 MIN_VOLUME = 200_000               # Minimum daily volume
@@ -42,7 +42,7 @@ AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
 GEMINI_RPM_PER_KEY = 10             # Conservative: well under 15 RPM limit
 GROQ_RPM_PER_KEY = 20               # Conservative: well under 30 RPM limit
 OPENROUTER_RPM = 10                 # OpenRouter free tier is strict
-INTER_AGENT_DELAY = 3               # Seconds to wait between each agent call
+INTER_AGENT_DELAY = 2               # Seconds to wait between each agent call
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
 GEMINI_MODEL = "gemini-2.0-flash"

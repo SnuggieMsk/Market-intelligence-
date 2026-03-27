@@ -141,42 +141,53 @@ def run_single_agent(agent: dict, stock: dict) -> dict:
         }
 
 
-def _get_healthy_providers() -> list:
-    """Check which LLM providers are working and return ordered list."""
-    console.print("[yellow]Testing LLM providers...[/yellow]")
+def run_health_check() -> list:
+    """
+    Run provider health check once. Returns list of alive providers.
+    Results are cached — call this at startup before running agents.
+    """
+    global _health_check_done, _alive_providers
+    if _health_check_done:
+        return _alive_providers
+
+    console.print("\n[bold yellow]Health Check: Testing LLM providers (1 call each)...[/bold yellow]")
     health = llm_pool.check_provider_health()
-    healthy = [p for p, ok in health.items() if ok]
+
+    _alive_providers = [p for p, ok in health.items() if ok]
+    _health_check_done = True
+
     for p, ok in health.items():
-        status = "[green]OK[/green]" if ok else "[red]DOWN[/red]"
+        status = "[bold green]ALIVE[/bold green]" if ok else "[bold red]DEAD — will skip[/bold red]"
         console.print(f"  {p:15s} {status}")
-    if not healthy:
-        console.print("[bold red]WARNING: No LLM providers available![/bold red]")
-    return healthy
+
+    if not _alive_providers:
+        console.print("[bold red]WARNING: No LLM providers available! All agents will fail.[/bold red]")
+    else:
+        console.print(f"[green]Active providers: {', '.join(_alive_providers)}[/green]")
+
+    return _alive_providers
 
 
-# Module-level cache so health check runs once per session
-_healthy_providers_cache = None
+# Module-level state — health check runs once per session
+_health_check_done = False
+_alive_providers = []
 
 
 def run_all_agents_on_stock(stock: dict) -> list:
     """
     Run all 36 agents against a single stock.
     Runs sequentially with delays to respect free tier rate limits.
-    Auto-detects working providers and redistributes agents.
+    Only uses providers that passed health check — zero wasted calls.
     """
-    global _healthy_providers_cache
     ticker = stock["ticker"]
     scan_id = stock.get("scan_id")
 
     console.print(f"\n[bold magenta]Running {len(AGENT_PERSONALITIES)} agents on {ticker}...[/bold magenta]")
 
-    # Run provider health check once per session
-    if _healthy_providers_cache is None:
-        _healthy_providers_cache = _get_healthy_providers()
-
-    healthy = _healthy_providers_cache
+    # Ensure health check has been done
+    healthy = run_health_check()
     if healthy:
-        console.print(f"[green]Using providers: {', '.join(healthy)}[/green]")
+        console.print(f"[dim]Routing to: {', '.join(healthy)}[/dim]")
         # Redistribute agents to only use healthy providers
         for idx, agent in enumerate(AGENT_PERSONALITIES):
             agent["prefer_provider"] = healthy[idx % len(healthy)]
