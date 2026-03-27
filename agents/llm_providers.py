@@ -220,6 +220,75 @@ class LLMPool:
 
         raise RuntimeError(f"OpenRouter: exhausted {self.MAX_RETRIES} retries due to rate limits")
 
+    # ── Quick Provider Health Check ────────────────────────────────────────
+
+    def check_provider_health(self) -> dict:
+        """
+        Quick single-attempt test of each provider. Returns dict of {provider: bool}.
+        Does NOT retry on 429 — just marks as down immediately.
+        """
+        results = {}
+        test_prompt = "Reply with exactly one word: OK"
+        test_sys = "You are a test bot. Reply with one word only."
+
+        # Test Gemini — single attempt, no retry
+        try:
+            key = self._next_gemini_key()
+            if not key:
+                results["gemini"] = False
+            else:
+                from google import genai
+                client = genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL, contents=test_prompt,
+                    config={"temperature": 0, "max_output_tokens": 10},
+                )
+                results["gemini"] = bool(response.text and len(response.text.strip()) > 0)
+        except Exception:
+            results["gemini"] = False
+
+        # Test Groq — single attempt
+        try:
+            key = self._next_groq_key()
+            if not key:
+                results["groq"] = False
+            else:
+                from groq import Groq
+                client = Groq(api_key=key)
+                response = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{"role": "user", "content": test_prompt}],
+                    temperature=0, max_tokens=10,
+                )
+                results["groq"] = bool(response.choices[0].message.content)
+        except Exception:
+            results["groq"] = False
+
+        # Test OpenRouter — single attempt
+        try:
+            if not OPENROUTER_API_KEY:
+                results["openrouter"] = False
+            else:
+                import requests as req
+                resp = req.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": test_prompt}],
+                        "max_tokens": 10,
+                    },
+                    timeout=30,
+                )
+                results["openrouter"] = resp.status_code == 200
+        except Exception:
+            results["openrouter"] = False
+
+        return results
+
     # ── Provider Health Tracking ─────────────────────────────────────────────
 
     def __init_health(self):
@@ -265,7 +334,7 @@ class LLMPool:
     # ── Unified Call with Smart Fallback ──────────────────────────────────────
 
     def call_llm(self, prompt: str, system_instruction: str = "",
-                 prefer: str = "gemini") -> str:
+                 prefer: str = "groq") -> str:
         """
         Call LLM with smart fallback chain.
         - Routes to preferred provider first
