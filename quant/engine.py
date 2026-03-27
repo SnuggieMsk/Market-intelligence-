@@ -1,17 +1,17 @@
 """
 Quantitative Prediction Engine — orchestrates all math models.
-Pure Python, zero LLM calls. Runs valuation, levels, and prediction models.
+Pure Python, zero LLM calls. Reuses scanner's data fetch (with retry + fallback).
 """
 
 import os
 import json
 import time
-import yfinance as yf
 from rich.console import Console
 
 from quant.valuation import compute_all_valuations
 from quant.levels import compute_support_resistance
 from quant.predictions import compute_all_predictions
+from scanner.metrics import _fetch_stock_data  # Reuse scanner's fetch with retry + fallback
 
 console = Console()
 
@@ -51,7 +51,7 @@ def _save_cache(ticker: str, data: dict):
 def run_quant_engine(ticker: str) -> dict:
     """
     Run all quantitative models for a single stock.
-    Returns combined dict with valuations, levels, and predictions.
+    Uses scanner's _fetch_stock_data which has retry + Yahoo/Google fallback.
     """
     # Check cache
     cached = _load_cache(ticker)
@@ -62,14 +62,13 @@ def run_quant_engine(ticker: str) -> dict:
     result = {"ticker": ticker, "error": None}
 
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1y")
+        # Reuse scanner's fetch function — has yfinance retry + Yahoo direct + Google fallback
+        hist, info = _fetch_stock_data(ticker)
 
         if hist.empty or len(hist) < 50:
             result["error"] = "Insufficient historical data"
             return result
 
-        info = stock.info or {}
         current_price = float(hist["Close"].iloc[-1])
 
         # 1. Valuations
@@ -109,12 +108,15 @@ def run_quant_engine(ticker: str) -> dict:
 
 def run_quant_engine_for_stocks(stocks: list) -> dict:
     """Run quant engine on all standout stocks. Returns {ticker: quant_results}."""
-    console.print(f"\n[bold cyan]Running Quant Engine on {len(stocks)} stocks (pure math, no API calls)...[/bold cyan]")
+    console.print(f"\n[bold cyan]Running Quant Engine on {len(stocks)} stocks...[/bold cyan]")
 
     results = {}
-    for stock in stocks:
+    for i, stock in enumerate(stocks):
         ticker = stock["ticker"]
         results[ticker] = run_quant_engine(ticker)
+        # Small delay between stocks to avoid yfinance rate limits
+        if i < len(stocks) - 1:
+            time.sleep(2)
 
     # Print summary
     console.print("\n[bold]Quant Engine Results:[/bold]")

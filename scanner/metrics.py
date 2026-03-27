@@ -204,12 +204,30 @@ def _fetch_google_finance(ticker: str) -> tuple:
 
 def _fetch_stock_data(ticker: str) -> tuple:
     """
-    Fetch stock data with 3-level fallback:
-    1. yfinance (with retry for rate limits)
-    2. Direct Yahoo Finance API (query2/query1)
-    3. Google Finance scraper (basic price only)
+    Fetch stock data with 3-level fallback + raw data caching.
+    1. Check raw data cache first (avoids re-fetching for quant engine)
+    2. yfinance (with retry for rate limits)
+    3. Direct Yahoo Finance API (query2/query1)
+    4. Google Finance scraper (basic price only)
     Returns (hist_df, info_dict).
     """
+    # Check raw data cache first — shared by scanner + quant engine
+    raw_cache_dir = os.path.join(CACHE_DIR, "raw")
+    os.makedirs(raw_cache_dir, exist_ok=True)
+    safe_name = ticker.replace(".", "_")
+    raw_cache_path = os.path.join(raw_cache_dir, f"{safe_name}_raw.json")
+
+    try:
+        if os.path.exists(raw_cache_path):
+            with open(raw_cache_path) as f:
+                cached = json.load(f)
+            if time.time() - cached.get("_cached_at", 0) < CACHE_MAX_AGE:
+                hist = pd.DataFrame(cached["hist"])
+                hist.index = pd.to_datetime(hist.index)
+                return hist, cached["info"]
+    except Exception:
+        pass  # Cache miss or corrupt, fetch fresh
+
     errors = []
 
     # Level 1: yfinance with retries
@@ -219,9 +237,10 @@ def _fetch_stock_data(ticker: str) -> tuple:
             hist = stock.history(period="1y")
             if not hist.empty:
                 info = stock.info
+                # Cache raw data for quant engine reuse
+                _save_raw_cache(raw_cache_path, hist, info)
                 return hist, info
             elif attempt == 0:
-                # Empty result on first try — might just be a glitch, retry once quickly
                 print(f"[yfinance] {ticker} returned empty data, retrying in 2s...")
                 time.sleep(2)
                 continue
@@ -233,12 +252,13 @@ def _fetch_stock_data(ticker: str) -> tuple:
                 time.sleep(wait)
             else:
                 errors.append(f"yfinance: {e}")
-                break  # Non-rate-limit error, try fallback
+                break
 
     # Level 2: Direct Yahoo Finance API (query2 + query1)
     print(f"[yfinance] {ticker} falling back to direct Yahoo API...")
     try:
         hist, info = _fetch_yahoo_direct(ticker)
+        _save_raw_cache(raw_cache_path, hist, info)
         return hist, info
     except Exception as e2:
         errors.append(f"yahoo_direct: {e2}")
@@ -247,11 +267,38 @@ def _fetch_stock_data(ticker: str) -> tuple:
     print(f"[Yahoo] {ticker} also failed, trying Google Finance...")
     try:
         hist, info = _fetch_google_finance(ticker)
+        _save_raw_cache(raw_cache_path, hist, info)
         return hist, info
     except Exception as e3:
         errors.append(f"google_finance: {e3}")
 
     raise RuntimeError(f"All data sources failed for {ticker}: {'; '.join(errors)}")
+
+
+def _save_raw_cache(path: str, hist, info: dict):
+    """Save raw hist + info to JSON cache for reuse by quant engine."""
+    try:
+        import numpy as np
+        # Convert hist DataFrame to JSON-safe dict
+        hist_dict = hist.to_dict()
+        # Convert Timestamp keys to strings
+        for col in hist_dict:
+            hist_dict[col] = {str(k): (float(v) if isinstance(v, (np.floating, np.integer)) else v)
+                              for k, v in hist_dict[col].items()}
+        # Convert numpy values in info
+        clean_info = {}
+        for k, v in info.items():
+            if isinstance(v, (np.floating, np.integer)):
+                clean_info[k] = float(v)
+            elif isinstance(v, (str, int, float, bool, type(None))):
+                clean_info[k] = v
+            else:
+                clean_info[k] = str(v)
+
+        with open(path, "w") as f:
+            json.dump({"hist": hist_dict, "info": clean_info, "_cached_at": time.time()}, f)
+    except Exception:
+        pass  # Non-critical
 
 
 def compute_all_metrics(ticker: str) -> Optional[dict]:
