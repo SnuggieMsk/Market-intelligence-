@@ -46,8 +46,8 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Overview", "Stock Deep Dive", "Agent Reports", "Research Reports",
-     "Quant Predictions", "Agent Consensus", "Scan History"],
+    ["Overview", "Analyze Any Stock", "Stock Deep Dive", "Agent Reports",
+     "Research Reports", "Quant Predictions", "Agent Consensus", "Scan History"],
 )
 
 st.sidebar.markdown("---")
@@ -94,10 +94,235 @@ def format_market_cap(mc):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PAGE: ANALYZE ANY STOCK
+# ══════════════════════════════════════════════════════════════════════════════
+
+if page == "Analyze Any Stock":
+    st.title("Analyze Any Listed Stock")
+    st.markdown("*Enter any NSE/BSE ticker to run the full analysis pipeline*")
+
+    col_input, col_exchange = st.columns([3, 1])
+    with col_input:
+        raw_ticker = st.text_input(
+            "Stock Ticker",
+            placeholder="e.g. RELIANCE, TCS, INFY, HDFCBANK",
+            help="Enter the stock symbol as listed on NSE. The .NS suffix will be added automatically.",
+        )
+    with col_exchange:
+        exchange = st.selectbox("Exchange", ["NSE (.NS)", "BSE (.BO)"])
+
+    # Quick suggestions
+    st.markdown("**Popular:** `RELIANCE` `TCS` `INFY` `HDFCBANK` `ICICIBANK` `WIPRO` `ITC` `SBIN` `BAJFINANCE` `TATAMOTORS`")
+
+    run_clicked = st.button("Run Full Analysis", type="primary", use_container_width=True)
+
+    if run_clicked and raw_ticker:
+        ticker = raw_ticker.strip().upper()
+        suffix = ".NS" if "NSE" in exchange else ".BO"
+        if not ticker.endswith((".NS", ".BO")):
+            ticker += suffix
+
+        st.markdown("---")
+        st.subheader(f"Analyzing {ticker}...")
+
+        # Progress tracking
+        status_container = st.container()
+        progress_bar = st.progress(0)
+
+        steps = {
+            "metrics": ("Scanning stock data & computing 32+ metrics...", 0.10),
+            "quant": ("Running quantitative models (fair value, Monte Carlo, etc.)...", 0.25),
+            "agents": ("Running 36 AI analyst agents...", 0.55),
+            "research": ("Running 8 research agents (news, earnings cross-reference)...", 0.75),
+            "aggregate": ("Synthesizing all analyses into final report...", 0.90),
+        }
+
+        status_text = status_container.empty()
+        step_statuses = {}
+
+        def progress_callback(step, detail):
+            step_statuses[step] = detail
+            info = steps.get(step, ("Processing...", 0.5))
+            progress_bar.progress(info[1])
+            status_text.markdown(f"**{info[0]}**\n\n{detail}")
+
+        # Run the pipeline
+        from pipeline.on_demand import analyze_single_stock
+
+        with st.spinner("Running full analysis pipeline..."):
+            result = analyze_single_stock(ticker, progress_callback=progress_callback)
+
+        progress_bar.progress(1.0)
+
+        if not result["success"] or result.get("error"):
+            st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
+            st.stop()
+
+        # ── Display Results ──────────────────────────────────────────────
+        status_text.empty()
+        st.success(f"Analysis complete for {ticker}!")
+
+        stock = result.get("stock", {})
+        quant = result.get("quant", {})
+        analyses = result.get("analyses", [])
+        research = result.get("research", [])
+        report = result.get("report", {})
+
+        # Summary header
+        st.markdown("---")
+        st.subheader(f"{stock.get('company_name', ticker)} ({ticker})")
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Price", f"₹{stock.get('current_price', 0):.2f}")
+        c2.metric("Market Cap", format_market_cap(stock.get("market_cap")))
+        c3.metric("Sector", stock.get("sector", "N/A"))
+        c4.metric("Composite Score", f"{stock.get('composite_score', 0):.1f}")
+
+        if report:
+            verdict = report.get("overall_verdict", "N/A")
+            c5.metric("Final Verdict", verdict)
+        else:
+            c5.metric("Agents Run", str(len(analyses)))
+
+        # ── Final Report ──
+        if report:
+            st.markdown("---")
+            st.subheader("Final Verdict")
+
+            v_col1, v_col2, v_col3 = st.columns(3)
+            v_col1.metric("Verdict", report.get("overall_verdict", "N/A"))
+            v_col2.metric("Score", f"{report.get('overall_score', 0)}/10")
+            v_col3.metric("Conviction", str(report.get("conviction", "N/A")).replace("_", " ").title())
+
+            if report.get("consensus_summary"):
+                st.markdown(f"**Consensus:** {report['consensus_summary']}")
+
+            col_bull, col_bear = st.columns(2)
+            with col_bull:
+                st.markdown("**Bull Case:**")
+                st.success(report.get("bull_case", "N/A"))
+                if report.get("key_catalysts"):
+                    catalysts = report["key_catalysts"] if isinstance(report["key_catalysts"], list) else []
+                    for c in catalysts:
+                        st.markdown(f"- {c}")
+            with col_bear:
+                st.markdown("**Bear Case:**")
+                st.error(report.get("bear_case", "N/A"))
+                if report.get("key_risks"):
+                    risks = report["key_risks"] if isinstance(report["key_risks"], list) else []
+                    for r in risks:
+                        st.markdown(f"- {r}")
+
+            if report.get("recommendation"):
+                st.info(f"**Recommendation:** {report['recommendation']}")
+
+            if report.get("entry_strategy"):
+                st.markdown(f"**Entry Strategy:** {report['entry_strategy']}")
+            if report.get("position_size"):
+                st.markdown(f"**Position Size:** {report['position_size']}")
+            if report.get("time_horizon"):
+                st.markdown(f"**Time Horizon:** {report['time_horizon']}")
+
+        # ── Quant Summary ──
+        if quant and not quant.get("error"):
+            st.markdown("---")
+            st.subheader("Quantitative Analysis")
+
+            summary = quant.get("summary", {})
+            valuations = quant.get("valuations", {})
+            predictions = quant.get("predictions", {})
+
+            q1, q2, q3, q4 = st.columns(4)
+            fair = valuations.get("composite_fair_value")
+            upside = valuations.get("composite_upside")
+            mc = predictions.get("monte_carlo", {})
+
+            q1.metric("Fair Value", f"₹{fair:.2f}" if fair else "N/A")
+            q2.metric("Upside/Downside", f"{upside:+.1f}%" if upside is not None else "N/A")
+            q3.metric("P(Up 30d)", f"{mc.get('prob_positive', 'N/A')}%" if mc.get("prob_positive") is not None else "N/A")
+            q4.metric("Monte Carlo Median", f"₹{mc.get('median_price', 0):.2f}" if mc.get("median_price") else "N/A")
+
+            # Valuation table
+            val_rows = []
+            for name, key, up_key in [
+                ("Graham Number", "graham_number", "upside_graham"),
+                ("DCF", "dcf_value", "upside_dcf"),
+                ("PEG Fair Value", "peg_value", "upside_peg"),
+                ("Composite", "composite_fair_value", "composite_upside"),
+            ]:
+                val = valuations.get(key)
+                up = valuations.get(up_key)
+                val_rows.append({
+                    "Model": name,
+                    "Fair Value": f"₹{val:.2f}" if val else "N/A",
+                    "Upside": f"{up:+.1f}%" if up is not None else "N/A",
+                })
+            st.dataframe(pd.DataFrame(val_rows), use_container_width=True, hide_index=True)
+
+        # ── Agent Verdicts Summary ──
+        if analyses:
+            st.markdown("---")
+            st.subheader(f"AI Agent Analysis ({len(analyses)} base + {len(research)} research)")
+
+            buy_count = sum(1 for a in analyses if "BUY" in a.get("verdict", ""))
+            sell_count = sum(1 for a in analyses if "SELL" in a.get("verdict", ""))
+            error_count = sum(1 for a in analyses if a.get("verdict") == "ERROR")
+            neutral_count = len(analyses) - buy_count - sell_count - error_count
+
+            a1, a2, a3, a4 = st.columns(4)
+            a1.metric("Bullish", buy_count)
+            a2.metric("Bearish", sell_count)
+            a3.metric("Neutral", neutral_count)
+            a4.metric("Errors", error_count)
+
+            # Verdict pie chart
+            all_a = analyses + research
+            verdict_counts = {}
+            for a in all_a:
+                v = a.get("verdict", "NEUTRAL")
+                if v != "ERROR":
+                    verdict_counts[v] = verdict_counts.get(v, 0) + 1
+
+            if verdict_counts:
+                fig = go.Figure(data=[go.Pie(
+                    labels=list(verdict_counts.keys()),
+                    values=list(verdict_counts.values()),
+                    hole=0.4,
+                    marker_colors=[verdict_color(v) for v in verdict_counts.keys()],
+                )])
+                fig.update_layout(title="Agent Verdict Distribution", height=350)
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Individual agent details (collapsed)
+            with st.expander(f"View all {len(all_a)} agent reports", expanded=False):
+                for a in sorted(all_a, key=lambda x: x.get("score", 0), reverse=True):
+                    v = a.get("verdict", "?")
+                    name = a.get("agent_name", "Unknown")
+                    score = a.get("score", 0)
+                    conf = a.get("confidence", 0)
+                    st.markdown(
+                        f"**{verdict_emoji(v)} {name}** — {v} | "
+                        f"Score: {score}/10 | Confidence: {conf:.0%}"
+                    )
+                    st.caption(a.get("reasoning", "")[:300])
+                    st.markdown("---")
+
+        st.markdown("---")
+        st.info(
+            "This stock has been saved to the database. You can view detailed breakdowns "
+            "in the **Stock Deep Dive**, **Agent Reports**, **Research Reports**, and "
+            "**Quant Predictions** pages."
+        )
+
+    elif run_clicked and not raw_ticker:
+        st.warning("Please enter a stock ticker.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PAGE: OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 
-if page == "Overview":
+elif page == "Overview":
     st.title("Market Intelligence Overview")
 
     reports = get_latest_reports(limit=20)
