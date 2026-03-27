@@ -45,7 +45,7 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Overview", "Stock Deep Dive", "Agent Consensus", "Scan History"],
+    ["Overview", "Stock Deep Dive", "Agent Reports", "Agent Consensus", "Scan History"],
 )
 
 st.sidebar.markdown("---")
@@ -332,6 +332,273 @@ elif page == "Stock Deep Dive":
                         st.markdown("**Risks:**")
                         for r in risks:
                             st.markdown(f"- ⚠️ {r}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: AGENT REPORTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif page == "Agent Reports":
+    st.title("Agent-by-Agent Full Reports")
+
+    reports = get_latest_reports(limit=20)
+    tickers = [r["ticker"] for r in reports]
+
+    if not tickers:
+        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.stop()
+
+    selected = st.selectbox("Select Stock to View All Agent Reports", tickers)
+    all_analyses = get_all_analyses_for_ticker(selected)
+
+    if not all_analyses:
+        st.warning(f"No agent analyses for {selected}")
+        st.stop()
+
+    report = get_report_for_ticker(selected)
+    company_name = report.get("company_name", selected) if report else selected
+
+    st.markdown(f"### {company_name} ({selected})")
+
+    # ── Summary Stats ─────────────────────────────────────────────────────
+    total = len(all_analyses)
+    buy_agents = [a for a in all_analyses if "BUY" in a.get("verdict", "")]
+    sell_agents = [a for a in all_analyses if "SELL" in a.get("verdict", "")]
+    neutral_agents = [a for a in all_analyses if a.get("verdict") == "NEUTRAL"]
+    error_agents = [a for a in all_analyses if a.get("verdict") == "ERROR"]
+
+    avg_score = sum(a.get("score", 5) for a in all_analyses) / max(total, 1)
+    avg_conf = sum(a.get("confidence", 0.5) for a in all_analyses) / max(total, 1)
+    max_score_agent = max(all_analyses, key=lambda a: a.get("score", 0))
+    min_score_agent = min(all_analyses, key=lambda a: a.get("score", 10))
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total Agents", total)
+    c2.metric("Bullish", len(buy_agents), delta=f"{len(buy_agents)/total*100:.0f}%")
+    c3.metric("Bearish", len(sell_agents), delta=f"-{len(sell_agents)/total*100:.0f}%")
+    c4.metric("Avg Score", f"{avg_score:.1f}/10")
+    c5.metric("Avg Confidence", f"{avg_conf:.0%}")
+
+    st.markdown("---")
+
+    # ── Most Bullish & Most Bearish ───────────────────────────────────────
+    col_bull, col_bear = st.columns(2)
+    with col_bull:
+        st.markdown(f"**Most Bullish Agent:**")
+        st.markdown(
+            f"**{max_score_agent.get('agent_name', '?')}** — "
+            f"Score: {max_score_agent.get('score', 0)}/10 | "
+            f"{max_score_agent.get('verdict', '?')}"
+        )
+        st.caption(max_score_agent.get("reasoning", "")[:200])
+    with col_bear:
+        st.markdown(f"**Most Bearish Agent:**")
+        st.markdown(
+            f"**{min_score_agent.get('agent_name', '?')}** — "
+            f"Score: {min_score_agent.get('score', 0)}/10 | "
+            f"{min_score_agent.get('verdict', '?')}"
+        )
+        st.caption(min_score_agent.get("reasoning", "")[:200])
+
+    st.markdown("---")
+
+    # ── Verdict & Score Charts ────────────────────────────────────────────
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        verdict_counts = {}
+        for a in all_analyses:
+            v = a.get("verdict", "NEUTRAL")
+            verdict_counts[v] = verdict_counts.get(v, 0) + 1
+        fig = go.Figure(data=[go.Pie(
+            labels=list(verdict_counts.keys()),
+            values=list(verdict_counts.values()),
+            hole=0.4,
+            marker_colors=[verdict_color(v) for v in verdict_counts.keys()],
+        )])
+        fig.update_layout(title="Verdict Distribution", height=300, margin=dict(t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with chart_col2:
+        agent_names = [a.get("agent_name", "?").split(" - ")[0] for a in all_analyses]
+        agent_scores = [a.get("score", 5) for a in all_analyses]
+        score_colors = ["#00ff88" if s >= 7 else "#ff3333" if s <= 4 else "#ffaa00" for s in agent_scores]
+
+        fig2 = go.Figure(data=[go.Bar(
+            x=agent_scores, y=agent_names,
+            orientation="h",
+            marker_color=score_colors,
+        )])
+        fig2.update_layout(
+            title="Score by Agent", height=max(400, total * 22),
+            xaxis_title="Score", yaxis=dict(autorange="reversed"),
+            margin=dict(l=10, t=40, b=20),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Confidence vs Score Scatter ───────────────────────────────────────
+    st.subheader("Confidence vs Score")
+    scatter_data = pd.DataFrame([{
+        "Agent": a.get("agent_name", "?"),
+        "Score": a.get("score", 5),
+        "Confidence": a.get("confidence", 0.5),
+        "Verdict": a.get("verdict", "NEUTRAL"),
+    } for a in all_analyses])
+
+    fig3 = px.scatter(
+        scatter_data, x="Score", y="Confidence",
+        color="Verdict", hover_data=["Agent"],
+        color_discrete_map={
+            "STRONG_BUY": "#00ff88", "BUY": "#44cc44",
+            "NEUTRAL": "#ffaa00",
+            "SELL": "#cc4444", "STRONG_SELL": "#ff3333",
+        },
+        title="Agent Confidence vs Score",
+    )
+    fig3.update_layout(height=400)
+    st.plotly_chart(fig3, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Filter by Verdict ─────────────────────────────────────────────────
+    st.subheader("Detailed Agent Reports")
+    filter_verdict = st.multiselect(
+        "Filter by Verdict",
+        ["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL", "ERROR"],
+        default=["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL"],
+    )
+
+    sort_by = st.radio("Sort by", ["Score (High to Low)", "Score (Low to High)", "Confidence", "Agent Name"], horizontal=True)
+
+    filtered = [a for a in all_analyses if a.get("verdict", "NEUTRAL") in filter_verdict]
+
+    if sort_by == "Score (High to Low)":
+        filtered.sort(key=lambda a: a.get("score", 0), reverse=True)
+    elif sort_by == "Score (Low to High)":
+        filtered.sort(key=lambda a: a.get("score", 0))
+    elif sort_by == "Confidence":
+        filtered.sort(key=lambda a: a.get("confidence", 0), reverse=True)
+    else:
+        filtered.sort(key=lambda a: a.get("agent_name", ""))
+
+    # ── Full Agent Cards ──────────────────────────────────────────────────
+    for i, a in enumerate(filtered):
+        verdict = a.get("verdict", "?")
+        agent_name = a.get("agent_name", "Unknown Agent")
+        score = a.get("score", 0)
+        confidence = a.get("confidence", 0)
+        reasoning = a.get("reasoning", "No reasoning provided")
+        role = a.get("agent_role", "N/A")
+
+        with st.expander(
+            f"{verdict_emoji(verdict)} **{agent_name}** | "
+            f"{verdict} | Score: {score}/10 | Confidence: {confidence:.0%}",
+            expanded=(i < 3),  # Auto-expand top 3
+        ):
+            # Header row
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Verdict", verdict)
+            mc2.metric("Score", f"{score}/10")
+            mc3.metric("Confidence", f"{confidence:.0%}")
+            mc4.metric("Role", role.replace("_", " ").title())
+
+            # Full reasoning
+            st.markdown("---")
+            st.markdown("**Full Analysis & Reasoning:**")
+            st.markdown(reasoning)
+
+            # Key points
+            if a.get("key_points"):
+                points = json.loads(a["key_points"]) if isinstance(a["key_points"], str) else a["key_points"]
+                if points:
+                    st.markdown("**Key Points:**")
+                    for p in points:
+                        st.markdown(f"- {p}")
+
+            # Catalysts & Risks side by side
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Catalysts (Bull Arguments):**")
+                if a.get("catalysts"):
+                    cats = json.loads(a["catalysts"]) if isinstance(a["catalysts"], str) else a["catalysts"]
+                    if cats:
+                        for c in cats:
+                            st.markdown(f"- ✅ {c}")
+                    else:
+                        st.caption("None identified")
+                else:
+                    st.caption("None identified")
+
+            with col2:
+                st.markdown("**Risks (Bear Arguments):**")
+                if a.get("risks"):
+                    risks = json.loads(a["risks"]) if isinstance(a["risks"], str) else a["risks"]
+                    if risks:
+                        for r in risks:
+                            st.markdown(f"- ⚠️ {r}")
+                    else:
+                        st.caption("None identified")
+                else:
+                    st.caption("None identified")
+
+            # Raw response (collapsible within collapsible)
+            if a.get("raw_response"):
+                raw = a["raw_response"]
+                if isinstance(raw, str):
+                    try:
+                        raw = json.loads(raw)
+                    except json.JSONDecodeError:
+                        pass
+                st.markdown("**Raw Agent Response:**")
+                st.json(raw if isinstance(raw, dict) else {"raw": str(raw)[:3000]})
+
+    # ── Synthesis Reports ─────────────────────────────────────────────────
+    if report:
+        st.markdown("---")
+        st.subheader("Aggregator Synthesis Reports")
+
+        st.markdown("**Data Synthesis (What the numbers say):**")
+        st.info(report.get("data_summary", "Not available"))
+
+        st.markdown("**Sentiment Synthesis (What the mood is):**")
+        st.info(report.get("sentiment_summary", "Not available"))
+
+        st.markdown("**Prediction Synthesis (What's likely to happen):**")
+        st.info(report.get("prediction_summary", "Not available"))
+
+        st.markdown("---")
+        st.markdown("**Final CIO Verdict:**")
+
+        if report.get("full_report_json"):
+            full = json.loads(report["full_report_json"]) if isinstance(report["full_report_json"], str) else report["full_report_json"]
+
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Overall Verdict", full.get("overall_verdict", "N/A"))
+            v2.metric("Overall Score", f"{full.get('overall_score', 0)}/10")
+            v3.metric("Conviction", full.get("conviction", "N/A").replace("_", " ").title())
+
+            if full.get("bull_case"):
+                st.success(f"**Bull Case:** {full['bull_case']}")
+            if full.get("bear_case"):
+                st.error(f"**Bear Case:** {full['bear_case']}")
+            if full.get("consensus_summary"):
+                st.markdown(f"**Consensus:** {full['consensus_summary']}")
+            if full.get("entry_strategy"):
+                st.markdown(f"**Entry Strategy:** {full['entry_strategy']}")
+            if full.get("position_size"):
+                st.markdown(f"**Suggested Position Size:** {full['position_size']}")
+            if full.get("time_horizon"):
+                st.markdown(f"**Time Horizon:** {full['time_horizon']}")
+            if full.get("exit_triggers"):
+                triggers = full["exit_triggers"]
+                if isinstance(triggers, list):
+                    st.markdown("**Exit Triggers:**")
+                    for t in triggers:
+                        st.markdown(f"- {t}")
+
+        if report.get("recommendation"):
+            st.markdown("---")
+            st.success(f"**FINAL RECOMMENDATION:** {report['recommendation']}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
