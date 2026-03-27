@@ -188,9 +188,12 @@ def run_all_agents_on_stock(stock: dict) -> list:
     healthy = run_health_check()
     if healthy:
         console.print(f"[dim]Routing to: {', '.join(healthy)}[/dim]")
-        # Redistribute agents to only use healthy providers
-        for idx, agent in enumerate(AGENT_PERSONALITIES):
-            agent["prefer_provider"] = healthy[idx % len(healthy)]
+        # All agents prefer the highest-priority alive provider (usually groq).
+        # Fallback to other providers happens per-call inside call_llm.
+        from config.settings import PROVIDER_PRIORITY
+        primary = next((p for p in PROVIDER_PRIORITY if p in healthy), healthy[0])
+        for agent in AGENT_PERSONALITIES:
+            agent["prefer_provider"] = primary
 
     analyses = []
     success_count = 0
@@ -345,11 +348,13 @@ def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
     research_context = build_research_context(ticker, company_name)
     existing_verdicts = _build_existing_verdicts_summary(base_analyses)
 
-    # Ensure health check done and redistribute
+    # Ensure health check done — all research agents prefer primary provider
     healthy = run_health_check()
     if healthy:
-        for idx, agent in enumerate(RESEARCH_AGENT_PERSONALITIES):
-            agent["prefer_provider"] = healthy[idx % len(healthy)]
+        from config.settings import PROVIDER_PRIORITY
+        primary = next((p for p in PROVIDER_PRIORITY if p in healthy), healthy[0])
+        for agent in RESEARCH_AGENT_PERSONALITIES:
+            agent["prefer_provider"] = primary
 
     analyses = []
     success_count = 0

@@ -45,9 +45,10 @@ class RateLimiter:
             self.timestamps.append(time.time())
 
     def backoff_after_429(self, attempt: int):
-        """Wait 60s for full rate window reset. Short waits don't help."""
-        wait = 60  # Always 60s — lets the per-minute window fully reset
-        print(f"[RateLimit] 429 — waiting {wait}s for rate window reset (attempt {attempt + 1})")
+        """Escalating backoff: 15s -> 30s -> 60s. Quick first retry, longer if persistent."""
+        wait_times = [15, 30, 60]
+        wait = wait_times[min(attempt, len(wait_times) - 1)]
+        print(f"[RateLimit] 429 — waiting {wait}s (attempt {attempt + 1})")
         time.sleep(wait)
 
 
@@ -78,6 +79,10 @@ class LLMPool:
         # None means "not checked yet" (will try all); empty set means "all dead"
         self._alive_providers: set | None = None
 
+        # Demotion tracking: providers with consecutive 429s get deprioritized
+        self._consecutive_429s: dict = {"gemini": 0, "groq": 0, "openrouter": 0}
+        self._demoted_providers: set = set()
+
     def set_alive_providers(self, alive: list[str]):
         """Called after health check to lock in which providers to use."""
         self._alive_providers = set(alive)
@@ -87,6 +92,22 @@ class LLMPool:
         if self._alive_providers is None:
             return True  # No health check run yet, try everything
         return provider in self._alive_providers
+
+    def _record_429(self, provider: str):
+        """Track consecutive 429s. Demote provider after threshold."""
+        from config.settings import PROVIDER_DEMOTE_AFTER_FAILURES
+        self._consecutive_429s[provider] = self._consecutive_429s.get(provider, 0) + 1
+        if self._consecutive_429s[provider] >= PROVIDER_DEMOTE_AFTER_FAILURES:
+            self._demoted_providers.add(provider)
+            print(f"[LLM] {provider} demoted after {self._consecutive_429s[provider]} consecutive 429s — deprioritized")
+
+    def _record_success(self, provider: str):
+        """Reset failure counter on success."""
+        self._consecutive_429s[provider] = 0
+        self._demoted_providers.discard(provider)
+
+    def _is_demoted(self, provider: str) -> bool:
+        return provider in self._demoted_providers
 
     def _next_gemini_key(self) -> str | None:
         with self._lock:
@@ -203,7 +224,7 @@ class LLMPool:
                         "model": OPENROUTER_MODEL,
                         "messages": messages,
                         "temperature": 0.7,
-                        "max_tokens": 4096,
+                        "max_tokens": 1024,
                     },
                     timeout=120,
                 )
@@ -314,12 +335,16 @@ class LLMPool:
             "openrouter": self.call_openrouter,
         }
 
-        # Build order: prefer first, then other alive providers
-        order = [prefer]
-        for p in ["gemini", "groq", "openrouter"]:
-            if p != prefer:
-                order.append(p)
+        from config.settings import PROVIDER_PRIORITY
 
+        # Build order: preferred first (if not demoted), then by priority, skip demoted
+        order = [prefer] if not self._is_demoted(prefer) else []
+        for p in PROVIDER_PRIORITY:
+            if p != prefer and not self._is_demoted(p):
+                order.append(p)
+        # If all demoted, try them anyway as last resort
+        if not order:
+            order = list(PROVIDER_PRIORITY)
         # Filter to alive only
         order = [p for p in order if self._is_alive(p)]
 
@@ -331,9 +356,14 @@ class LLMPool:
             fn = all_providers[provider_name]
             try:
                 result = fn(prompt, system_instruction)
+                self._record_success(provider_name)
                 return result
             except Exception as e:
                 last_error = e
+                # Track 429s for demotion
+                err_str = str(e).lower()
+                if "429" in err_str or "rate" in err_str:
+                    self._record_429(provider_name)
                 print(f"[LLM] {provider_name} failed: {e}, trying next...")
                 continue
 

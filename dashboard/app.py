@@ -14,6 +14,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scanner.universe import NIFTY_50, SENSEX_30, NIFTY_NEXT_50, EXTRA_WATCHLIST
+
 from data.database import (
     init_db, get_latest_scan_results, get_latest_reports,
     get_report_for_ticker, get_all_analyses_for_ticker,
@@ -292,6 +294,29 @@ def safe_json(val):
     return []
 
 
+def reasoning_teaser(reasoning: str, max_chars: int = 120) -> str:
+    """Extract a brief teaser from reasoning text."""
+    if not reasoning or reasoning == "N/A":
+        return ""
+    text = reasoning.strip().replace("\n", " ")
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] + "..."
+
+
+def verdict_teaser_line(verdict: str, name: str, score, conf, reasoning: str = "") -> str:
+    """Render a colored verdict badge + agent name + teaser as HTML."""
+    bg = VERDICT_COLORS.get(verdict, "#8B8589")
+    teaser = reasoning_teaser(reasoning)
+    teaser_html = f'<br><span style="color:#8B8589;font-size:0.82em;font-style:italic;">{teaser}</span>' if teaser else ''
+    return (
+        f'<span style="background:{bg};color:#1A1A2E;padding:2px 10px;border-radius:12px;'
+        f'font-size:0.8em;font-weight:700;">{verdict}</span> '
+        f'<strong>{name}</strong> &mdash; {score}/10 | {conf:.0%}'
+        f'{teaser_html}'
+    )
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -377,7 +402,17 @@ if page == "Overview":
             company = report.get("company_name", ticker)
             price = report.get("current_price", 0)
 
-            with st.expander(f"{ticker} | {company} | Score: {score}/10 | {verdict}"):
+            # Colored teaser line above expander
+            _bg = VERDICT_COLORS.get(verdict, "#8B8589")
+            _teaser = reasoning_teaser(report.get("consensus_summary", ""))
+            _teaser_html = f' &mdash; <span style="color:#8B8589;font-size:0.82em;">{_teaser}</span>' if _teaser else ''
+            st.markdown(
+                f'<span style="background:{_bg};color:#1A1A2E;padding:2px 10px;border-radius:12px;'
+                f'font-size:0.8em;font-weight:700;">{verdict}</span> '
+                f'<strong>{ticker}</strong> {company} | {score}/10{_teaser_html}',
+                unsafe_allow_html=True,
+            )
+            with st.expander(f"View details: {ticker}", expanded=False):
                 mc1, mc2, mc3 = st.columns(3)
                 mc1.metric("Price", format_inr(price))
                 mc2.metric("Score", f"{score}/10")
@@ -521,7 +556,12 @@ elif page == "Stock Deep Dive":
 
         for a in all_analyses:
             v = a.get("verdict", "?")
-            with st.expander(f"{a.get('agent_name', '?')} | {v} | Score: {a.get('score', 0)}/10"):
+            st.markdown(
+                verdict_teaser_line(v, a.get("agent_name", "?"), a.get("score", 0),
+                                    a.get("confidence", 0.5), a.get("reasoning", "")),
+                unsafe_allow_html=True,
+            )
+            with st.expander(f"View analysis: {a.get('agent_name', '?')}"):
                 st.markdown(f"**Role:** {a.get('agent_role', 'N/A')}")
                 st.markdown(f"**Reasoning:** {a.get('reasoning', 'N/A')}")
                 col1, col2 = st.columns(2)
@@ -655,7 +695,11 @@ elif page == "Agent Reports":
         score = a.get("score", 0)
         conf = a.get("confidence", 0)
 
-        with st.expander(f"{name} | {v} | {score}/10 | {conf:.0%}", expanded=(i < 3)):
+        st.markdown(
+            verdict_teaser_line(v, name, score, conf, a.get("reasoning", "")),
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"View full analysis: {name}", expanded=(i < 3)):
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("Verdict", v)
             mc2.metric("Score", f"{score}/10")
@@ -779,7 +823,12 @@ elif page == "Research Reports":
 
     for a in research:
         v = a.get("verdict", "?")
-        with st.expander(f"{a.get('agent_name', '?')} | {v} | Score: {a.get('score', 0)}/10", expanded=True):
+        st.markdown(
+            verdict_teaser_line(v, a.get("agent_name", "?"), a.get("score", 0),
+                                a.get("confidence", 0.5), a.get("reasoning", "")),
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"View research: {a.get('agent_name', '?')}", expanded=True):
             mc1, mc2, mc3 = st.columns(3)
             mc1.metric("Verdict", v)
             mc2.metric("Score", f"{a.get('score', 0)}/10")
@@ -1096,13 +1145,31 @@ elif page == "Consensus Heatmap":
 
 elif page == "Analyze Any Stock":
     st.markdown('<p class="hero-text">Analyze Any Stock</p>', unsafe_allow_html=True)
-    st.markdown('<p class="hero-sub">ENTER ANY NSE/BSE TICKER FOR FULL ANALYSIS</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">SEARCH ANY NSE/BSE TICKER FOR FULL ANALYSIS</p>', unsafe_allow_html=True)
 
     st.markdown("")
-    ticker_input = st.text_input(
-        "Enter NSE ticker symbol (e.g. RELIANCE, TCS, INFY, ZOMATO)",
-        placeholder="RELIANCE",
+
+    # Build predictive dropdown from all known tickers (sorted, deduped)
+    _all_tickers_raw = sorted(set(NIFTY_50 + SENSEX_30 + NIFTY_NEXT_50 + EXTRA_WATCHLIST))
+    _ticker_options = [""] + _all_tickers_raw
+
+    ticker_select = st.selectbox(
+        "Search for a stock (type to filter)",
+        options=_ticker_options,
+        index=0,
+        format_func=lambda x: "Type to search (e.g. REL, TCS, INFY)..." if x == "" else x,
+        key="ticker_search",
     )
+
+    # Also allow manual entry for tickers not in the list
+    custom_ticker = st.text_input(
+        "Or enter a custom ticker not in the list",
+        placeholder="e.g. NEWIPO",
+        key="custom_ticker_input",
+    )
+
+    # Determine final ticker
+    ticker_input = custom_ticker.strip().upper() if custom_ticker.strip() else ticker_select
 
     if ticker_input:
         ticker = ticker_input.strip().upper()
@@ -1117,19 +1184,21 @@ elif page == "Analyze Any Stock":
         if st.button(f"Run Full Analysis on {ticker}", type="primary"):
             from pipeline.on_demand import analyze_single_stock
 
-            progress = st.progress(0, text="Starting analysis...")
-            status = st.empty()
+            # Rich loading display with st.status
+            status_box = st.status("Initializing analysis pipeline...", expanded=True)
+            progress_bar = st.progress(0)
 
             def update_progress(step, total, msg):
-                progress.progress(step / total, text=msg)
-                status.markdown(f"**Step {step}/{total}:** {msg}")
+                progress_bar.progress(step / total, text=f"Step {step}/{total}")
+                status_box.update(label=msg, state="running")
+                status_box.write(f"**Step {step}/{total}:** {msg}")
 
-            with st.spinner("Running full pipeline..."):
-                result = analyze_single_stock(ticker, progress_callback=update_progress)
+            result = analyze_single_stock(ticker, progress_callback=update_progress)
 
             if result.get("success"):
-                progress.progress(1.0, text="Complete!")
-                st.success(f"Analysis complete for {ticker}!")
+                progress_bar.progress(1.0, text="Analysis complete!")
+                status_box.update(label="Analysis complete!", state="complete", expanded=False)
+                st.success(f"Full analysis complete for {ticker}!")
 
                 # Show quick results
                 report = get_report_for_ticker(ticker)
@@ -1147,14 +1216,16 @@ elif page == "Analyze Any Stock":
                 st.markdown("---")
                 st.markdown("Navigate to **Stock Deep Dive** or **Agent Reports** for full details.")
             else:
+                status_box.update(label="Analysis failed", state="error")
                 st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
     else:
         st.markdown("""
         **How it works:**
-        1. Enter any NSE/BSE listed stock ticker
-        2. Click 'Run Full Analysis'
-        3. The system will compute 32+ metrics, run 36 AI agents + 8 research agents, and aggregate results
-        4. View detailed results in Stock Deep Dive, Agent Reports, or Quant Predictions pages
+        1. Search for any NSE/BSE listed stock from the dropdown (type to filter)
+        2. Or enter a custom ticker not in the list
+        3. Click 'Run Full Analysis' to run 32+ metrics, 36 AI agents + 8 research agents
+        4. Watch each step complete in real-time
+        5. View detailed results in Stock Deep Dive, Agent Reports, or Quant Predictions
         """)
 
 

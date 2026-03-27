@@ -395,7 +395,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         metrics["relative_volume"] = (avg_vol_5 / avg_volume_20) if avg_volume_20 > 0 else 1
 
         # 11. Volume-Price Trend
-        vpt = ((close.pct_change() * volume).cumsum())
+        vpt = ((close.ffill().pct_change() * volume).cumsum())
         metrics["volume_price_trend"] = vpt.iloc[-1] / vpt.abs().max() if vpt.abs().max() > 0 else 0
 
         # 12. Accumulation/Distribution
@@ -414,7 +414,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         # VOLATILITY (4 metrics)
         # ══════════════════════════════════════════════════════════════════════
 
-        returns = close.pct_change().dropna()
+        returns = close.ffill().pct_change().dropna()
 
         # 14. Historical volatility (annualized)
         metrics["historical_volatility"] = returns.tail(30).std() * np.sqrt(252) * 100

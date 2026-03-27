@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''dashboard/app.py'', doraise=True\\); py_compile.compile\\(''pipeline/on_demand.py'', doraise=True\\); py_compile.compile\\(''agents/llm_providers.py'', doraise=True\\); py_compile.compile\\(''agents/executor.py'', doraise=True\\); py_compile.compile\\(''config/settings.py'', doraise=True\\); py_compile.compile\\(''scanner/metrics.py'', doraise=True\\); print\\(''ALL OK''\\)\")",
+      "Bash(cp \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\.claude\\\\worktrees\\\\jolly-einstein\\\\scanner\\\\metrics.py\" \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\scanner\\\\metrics.py\")",
+      "Bash(cp \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\.claude\\\\worktrees\\\\jolly-einstein\\\\config\\\\settings.py\" \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\config\\\\settings.py\")",
+      "Bash(cp \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\.claude\\\\worktrees\\\\jolly-einstein\\\\agents\\\\llm_providers.py\" \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\agents\\\\llm_providers.py\")",
+      "Bash(cp \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\.claude\\\\worktrees\\\\jolly-einstein\\\\agents\\\\executor.py\" \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\agents\\\\executor.py\")",
+      "Bash(cp \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\.claude\\\\worktrees\\\\jolly-einstein\\\\dashboard\\\\app.py\" \"C:\\\\Users\\\\User\\\\Market-intelligence-\\\\dashboard\\\\app.py\")"
+    ]
+  }
+}

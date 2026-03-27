@@ -41,8 +41,13 @@ MAX_CONCURRENT_AGENTS = 1           # Sequential: 1 at a time to avoid rate limi
 AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
 GEMINI_RPM_PER_KEY = 8               # Conservative: accounts for TPM limits too
 GROQ_RPM_PER_KEY = 10               # Groq free TPM is 6000 — ~5-6 calls/min realistic
-OPENROUTER_RPM = 8                  # OpenRouter free tier is strict
+OPENROUTER_RPM = 3                  # OpenRouter free :free models ~3-5 RPM realistic
 INTER_AGENT_DELAY = 5               # 5s gap = max 12 calls/min, safe for all providers
+
+# Provider priority: groq is the workhorse (2 keys x 10 RPM = 20 RPM).
+# OpenRouter is fallback-only due to severe free-tier limits.
+PROVIDER_PRIORITY = ["groq", "gemini", "openrouter"]
+PROVIDER_DEMOTE_AFTER_FAILURES = 2  # Consecutive 429s before demoting a provider
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
 GEMINI_MODEL = "gemini-2.0-flash"
