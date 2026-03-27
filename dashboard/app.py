@@ -1,6 +1,6 @@
 """
-Streamlit Dashboard for Market Intelligence System.
-Run with: streamlit run dashboard/app.py
+Market Intelligence Dashboard — Professional Grade
+Finance-bro meets cafe-girl aesthetic: warm tones, clean data, espresso vibes.
 """
 
 import json
@@ -12,7 +12,6 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.database import (
@@ -22,203 +21,429 @@ from data.database import (
     get_research_analyses_for_ticker,
 )
 
-# ── Page Config ───────────────────────────────────────────────────────────────
+# ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Market Intelligence Dashboard",
-    page_icon="📊",
+    page_title="Market Intelligence",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Auto-refresh
 try:
     from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=300_000, key="auto_refresh")  # 5 minutes
+    st_autorefresh(interval=300_000, key="auto_refresh")
 except ImportError:
     pass
 
 init_db()
 
+# ── Custom CSS: Warm espresso + cream palette ────────────────────────────────
+st.markdown("""
+<style>
+/* Import fonts */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap');
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-st.sidebar.title("Market Intelligence")
-st.sidebar.markdown("---")
+/* Root variables */
+:root {
+    --espresso: #2C1810;
+    --dark-roast: #1A1A2E;
+    --cream: #FAF3E0;
+    --latte: #D4A574;
+    --rose-gold: #B76E79;
+    --sage: #87A878;
+    --mint: #98D4BB;
+    --warm-gray: #8B8589;
+    --soft-white: #FFF8F0;
+    --caramel: #C68B59;
+    --blush: #E8C4C4;
+}
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["Overview", "Stock Deep Dive", "Agent Reports", "Research Reports",
-     "Quant Predictions", "Agent Consensus", "Scan History"],
+/* Main background */
+.stApp {
+    background: linear-gradient(135deg, #1A1A2E 0%, #16213E 50%, #1A1A2E 100%);
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1E1E30 0%, #2C1810 100%) !important;
+    border-right: 1px solid rgba(212, 165, 116, 0.15);
+}
+
+section[data-testid="stSidebar"] .stRadio label {
+    font-family: 'DM Sans', sans-serif !important;
+    color: #FAF3E0 !important;
+    font-weight: 500;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+section[data-testid="stSidebar"] .stRadio label:hover {
+    background: rgba(212, 165, 116, 0.1);
+}
+
+/* Headers */
+h1, h2, h3 {
+    font-family: 'DM Serif Display', serif !important;
+    color: #FAF3E0 !important;
+}
+
+h1 { letter-spacing: -0.5px; }
+
+/* Body text */
+p, li, span, div {
+    font-family: 'DM Sans', sans-serif !important;
+}
+
+/* Metric cards */
+div[data-testid="stMetric"] {
+    background: linear-gradient(135deg, rgba(44, 24, 16, 0.6) 0%, rgba(30, 30, 48, 0.6) 100%);
+    border: 1px solid rgba(212, 165, 116, 0.2);
+    border-radius: 12px;
+    padding: 16px 20px;
+    backdrop-filter: blur(10px);
+}
+
+div[data-testid="stMetric"] label {
+    color: #D4A574 !important;
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 500;
+}
+
+div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+    color: #FAF3E0 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 500;
+}
+
+/* Expander styling */
+details {
+    background: rgba(44, 24, 16, 0.3) !important;
+    border: 1px solid rgba(212, 165, 116, 0.15) !important;
+    border-radius: 12px !important;
+    margin-bottom: 8px;
+}
+
+details summary {
+    font-family: 'DM Sans', sans-serif !important;
+    color: #FAF3E0 !important;
+    font-weight: 500;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: rgba(44, 24, 16, 0.3);
+    border-radius: 12px;
+    padding: 4px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px;
+    color: #D4A574 !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    background: rgba(183, 110, 121, 0.3) !important;
+    color: #FAF3E0 !important;
+}
+
+/* Dataframe */
+.stDataFrame {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Selectbox */
+div[data-baseweb="select"] {
+    font-family: 'DM Sans', sans-serif !important;
+}
+
+/* Success/Info/Warning/Error boxes */
+div[data-testid="stAlert"] {
+    border-radius: 10px;
+    font-family: 'DM Sans', sans-serif !important;
+}
+
+/* Plotly charts - dark theme */
+.js-plotly-plot {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Dividers */
+hr {
+    border-color: rgba(212, 165, 116, 0.15) !important;
+    margin: 1.5rem 0 !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #1A1A2E; }
+::-webkit-scrollbar-thumb { background: #D4A574; border-radius: 3px; }
+
+/* Badge styles */
+.verdict-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-family: 'DM Sans', sans-serif;
+    letter-spacing: 0.5px;
+}
+.badge-buy { background: rgba(135, 168, 120, 0.25); color: #98D4BB; border: 1px solid rgba(135, 168, 120, 0.4); }
+.badge-sell { background: rgba(183, 110, 121, 0.25); color: #E8C4C4; border: 1px solid rgba(183, 110, 121, 0.4); }
+.badge-neutral { background: rgba(212, 165, 116, 0.25); color: #D4A574; border: 1px solid rgba(212, 165, 116, 0.4); }
+
+/* Stock card */
+.stock-card {
+    background: linear-gradient(135deg, rgba(44, 24, 16, 0.4) 0%, rgba(30, 30, 48, 0.4) 100%);
+    border: 1px solid rgba(212, 165, 116, 0.15);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 12px;
+    backdrop-filter: blur(10px);
+}
+
+/* Hero section */
+.hero-text {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.2rem;
+    color: #FAF3E0;
+    line-height: 1.2;
+    margin-bottom: 4px;
+}
+.hero-sub {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem;
+    color: #D4A574;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Chart Theme ──────────────────────────────────────────────────────────────
+CHART_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(26,26,46,0.5)",
+    font=dict(family="DM Sans, sans-serif", color="#FAF3E0", size=12),
+    margin=dict(l=40, r=20, t=50, b=30),
+    xaxis=dict(gridcolor="rgba(212,165,116,0.1)", zerolinecolor="rgba(212,165,116,0.1)"),
+    yaxis=dict(gridcolor="rgba(212,165,116,0.1)", zerolinecolor="rgba(212,165,116,0.1)"),
+    colorway=["#D4A574", "#B76E79", "#98D4BB", "#87A878", "#E8C4C4", "#C68B59", "#8B8589"],
 )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    f"**Last updated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-)
+VERDICT_COLORS = {
+    "STRONG_BUY": "#98D4BB", "BUY": "#87A878",
+    "NEUTRAL": "#D4A574",
+    "SELL": "#B76E79", "STRONG_SELL": "#E8C4C4",
+    "ERROR": "#8B8589",
+}
+
+PIE_COLORS = ["#87A878", "#98D4BB", "#D4A574", "#B76E79", "#E8C4C4", "#8B8589"]
 
 
-# ── Helper Functions ──────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-def verdict_color(verdict: str) -> str:
-    if "STRONG_BUY" in verdict:
-        return "#00ff88"
-    elif "BUY" in verdict:
-        return "#44cc44"
-    elif "STRONG_SELL" in verdict:
-        return "#ff3333"
+def verdict_badge(verdict: str) -> str:
+    if "BUY" in verdict:
+        cls = "badge-buy"
     elif "SELL" in verdict:
-        return "#cc4444"
-    return "#ffaa00"
+        cls = "badge-sell"
+    else:
+        cls = "badge-neutral"
+    return f'<span class="verdict-badge {cls}">{verdict}</span>'
 
 
-def verdict_emoji(verdict: str) -> str:
-    mapping = {
-        "STRONG_BUY": "🟢🟢",
-        "BUY": "🟢",
-        "NEUTRAL": "🟡",
-        "SELL": "🔴",
-        "STRONG_SELL": "🔴🔴",
-    }
-    return mapping.get(verdict, "⚪")
+def format_inr(val):
+    if not val:
+        return "N/A"
+    return f"\u20b9{val:,.2f}"
 
 
 def format_market_cap(mc):
     if not mc:
         return "N/A"
-    # Indian notation: Cr (crore) and L Cr (lakh crore)
-    cr = mc / 1e7  # 1 crore = 10 million
+    cr = mc / 1e7
     if cr >= 1e5:
-        return f"₹{cr/1e5:.1f}L Cr"
+        return f"\u20b9{cr/1e5:.1f}L Cr"
     if cr >= 1:
-        return f"₹{cr:,.0f} Cr"
-    return f"₹{mc:,.0f}"
+        return f"\u20b9{cr:,.0f} Cr"
+    return f"\u20b9{mc:,.0f}"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+def safe_json(val):
+    if not val:
+        return []
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
+
+# ── Sidebar ──────────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.markdown('<div class="hero-sub">MARKET INTELLIGENCE</div>', unsafe_allow_html=True)
+    st.markdown("---")
+
+    page = st.radio(
+        "Navigate",
+        [
+            "Overview",
+            "Stock Deep Dive",
+            "Agent Reports",
+            "Research Reports",
+            "Quant Predictions",
+            "Consensus Heatmap",
+            "Analyze Any Stock",
+            "Scan History",
+        ],
+        label_visibility="collapsed",
+    )
+
+    st.markdown("---")
+    st.caption(f"Updated {datetime.now().strftime('%H:%M:%S')}")
+    st.caption("Built with Gemini + Groq + OpenRouter")
+
+
+# ==============================================================================
 # PAGE: OVERVIEW
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 if page == "Overview":
-    st.title("Market Intelligence Overview")
+    st.markdown('<p class="hero-text">Market Intelligence</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">AI-POWERED STOCK ANALYSIS FOR INDIAN MARKETS</p>', unsafe_allow_html=True)
+    st.markdown("")
 
     reports = get_latest_reports(limit=20)
 
     if not reports:
-        st.warning("No analysis reports yet. Run the scanner first: `python main.py`")
-        st.info("""
-        **Getting Started:**
-        1. Copy `.env.example` to `.env` and add your API keys
-        2. Install dependencies: `pip install -r requirements.txt`
-        3. Run the scanner: `python main.py`
-        4. Results will appear here automatically
-        """)
+        st.markdown("---")
+        st.info("No analysis data yet. Run `python main.py` to start scanning.")
         st.stop()
 
-    # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-    buy_reports = [r for r in reports if "BUY" in r.get("overall_verdict", "")]
-    sell_reports = [r for r in reports if "SELL" in r.get("overall_verdict", "")]
-
-    col1.metric("Stocks Analyzed", len(reports))
-    col2.metric("Buy Signals", len(buy_reports))
-    col3.metric("Sell Signals", len(sell_reports))
+    # Summary row
+    buy_count = sum(1 for r in reports if "BUY" in r.get("overall_verdict", ""))
+    sell_count = sum(1 for r in reports if "SELL" in r.get("overall_verdict", ""))
     avg_score = sum(r.get("overall_score", 5) for r in reports) / max(len(reports), 1)
-    col4.metric("Avg Score", f"{avg_score:.1f}/10")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Stocks Analyzed", len(reports))
+    c2.metric("Buy Signals", buy_count)
+    c3.metric("Sell Signals", sell_count)
+    c4.metric("Avg Score", f"{avg_score:.1f}/10")
 
     st.markdown("---")
 
-    # Main table
-    st.subheader("Latest Analysis Results")
+    # Verdict distribution chart
+    verdict_counts = {}
+    for r in reports:
+        v = r.get("overall_verdict", "NEUTRAL")
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
 
-    for report in reports:
-        ticker = report["ticker"]
-        verdict = report.get("overall_verdict", "NEUTRAL")
-        score = report.get("overall_score", 5)
-        company = report.get("company_name", ticker)
-        sector = report.get("sector", "")
-        price = report.get("current_price", 0)
-        mcap = report.get("market_cap", 0)
-        recommendation = report.get("recommendation", "")
-        agreement = report.get("agent_agreement_pct", 0)
+    chart_col, table_col = st.columns([1, 2])
 
-        with st.expander(
-            f"{verdict_emoji(verdict)} **{ticker}** — {company} | "
-            f"Score: {score}/10 | {verdict} | ₹{price:.2f}"
-        ):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Verdict", verdict)
-            c2.metric("Score", f"{score}/10")
-            c3.metric("Price", f"₹{price:.2f}")
-            c4.metric("Market Cap", format_market_cap(mcap))
+    with chart_col:
+        fig = go.Figure(data=[go.Pie(
+            labels=list(verdict_counts.keys()),
+            values=list(verdict_counts.values()),
+            hole=0.55,
+            marker_colors=[VERDICT_COLORS.get(v, "#8B8589") for v in verdict_counts],
+            textinfo="label+value",
+            textfont=dict(size=12, family="DM Sans"),
+        )])
+        fig.update_layout(**CHART_LAYOUT, height=320, showlegend=False,
+                          title=dict(text="Verdict Split", font=dict(size=14)))
+        st.plotly_chart(fig, use_container_width=True)
 
-            if report.get("consensus_summary"):
-                st.markdown(f"**Consensus:** {report['consensus_summary']}")
+    with table_col:
+        st.markdown("### Latest Verdicts")
+        for report in reports:
+            ticker = report["ticker"]
+            verdict = report.get("overall_verdict", "NEUTRAL")
+            score = report.get("overall_score", 5)
+            company = report.get("company_name", ticker)
+            price = report.get("current_price", 0)
 
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**Bull Case:**")
-                st.markdown(report.get("bull_case", "N/A"))
-                if report.get("key_catalysts"):
-                    catalysts = json.loads(report["key_catalysts"]) if isinstance(report["key_catalysts"], str) else report["key_catalysts"]
-                    for c in catalysts:
-                        st.markdown(f"- ✅ {c}")
+            with st.expander(f"{ticker} | {company} | Score: {score}/10 | {verdict}"):
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("Price", format_inr(price))
+                mc2.metric("Score", f"{score}/10")
+                mc3.metric("Market Cap", format_market_cap(report.get("market_cap")))
 
-            with col_b:
-                st.markdown("**Bear Case:**")
-                st.markdown(report.get("bear_case", "N/A"))
-                if report.get("key_risks"):
-                    risks = json.loads(report["key_risks"]) if isinstance(report["key_risks"], str) else report["key_risks"]
-                    for r in risks:
-                        st.markdown(f"- ⚠️ {r}")
+                if report.get("consensus_summary"):
+                    st.markdown(f"**Consensus:** {report['consensus_summary']}")
 
-            if recommendation:
-                st.info(f"**Recommendation:** {recommendation}")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown("**Bull Case**")
+                    st.markdown(report.get("bull_case", "N/A"))
+                    for c in safe_json(report.get("key_catalysts")):
+                        st.markdown(f"- {c}")
+
+                with col_b:
+                    st.markdown("**Bear Case**")
+                    st.markdown(report.get("bear_case", "N/A"))
+                    for r in safe_json(report.get("key_risks")):
+                        st.markdown(f"- {r}")
+
+                if report.get("recommendation"):
+                    st.info(f"**Recommendation:** {report['recommendation']}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # PAGE: STOCK DEEP DIVE
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 elif page == "Stock Deep Dive":
-    st.title("Stock Deep Dive")
+    st.markdown('<p class="hero-text">Stock Deep Dive</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">32+ METRICS | AI SYNTHESIS | FULL BREAKDOWN</p>', unsafe_allow_html=True)
 
     reports = get_latest_reports(limit=20)
     tickers = [r["ticker"] for r in reports]
 
     if not tickers:
-        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.info("No stocks analyzed yet.")
         st.stop()
 
     selected = st.selectbox("Select Stock", tickers)
     report = get_report_for_ticker(selected)
 
     if not report:
-        st.warning(f"No report found for {selected}")
+        st.warning(f"No report for {selected}")
         st.stop()
 
-    # Header
     verdict = report.get("overall_verdict", "NEUTRAL")
-    st.markdown(
-        f"### {verdict_emoji(verdict)} {selected} — "
-        f"{report.get('company_name', selected)}"
-    )
+    st.markdown(f"### {report.get('company_name', selected)} ({selected})")
+    st.markdown(verdict_badge(verdict), unsafe_allow_html=True)
 
-    # Key metrics row
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Verdict", verdict)
-    c2.metric("Score", f"{report.get('overall_score', 0)}/10")
-    c3.metric("Price", f"₹{report.get('current_price', 0):.2f}")
-    c4.metric("Market Cap", format_market_cap(report.get("market_cap")))
-    c5.metric("Sector", report.get("sector", "N/A"))
+    c1.metric("Score", f"{report.get('overall_score', 0)}/10")
+    c2.metric("Price", format_inr(report.get("current_price")))
+    c3.metric("Market Cap", format_market_cap(report.get("market_cap")))
+    c4.metric("Sector", report.get("sector", "N/A"))
+    c5.metric("Agreement", f"{report.get('agent_agreement_pct', 0):.0f}%")
 
     st.markdown("---")
 
-    # Detailed metrics from scan
+    # Scanner Metrics
     if report.get("metrics_json"):
         metrics = json.loads(report["metrics_json"]) if isinstance(report["metrics_json"], str) else report["metrics_json"]
 
-        st.subheader("Scanner Metrics (32+)")
-
-        tabs = st.tabs(["Price Action", "Volume", "Volatility", "Momentum", "Fundamentals", "Sentiment"])
+        st.markdown("### Scanner Metrics")
+        tabs = st.tabs(["Price", "Volume", "Volatility", "Momentum", "Fundamentals", "Sentiment"])
 
         with tabs[0]:
             mc1, mc2, mc3, mc4 = st.columns(4)
@@ -230,21 +455,21 @@ elif page == "Stock Deep Dive":
         with tabs[1]:
             mc1, mc2, mc3 = st.columns(3)
             mc1.metric("Volume Surge", f"{metrics.get('volume_surge', 1):.1f}x")
-            mc2.metric("Relative Volume", f"{metrics.get('relative_volume', 1):.1f}x")
-            mc3.metric("OBV Trend", "Rising" if metrics.get("on_balance_volume_trend", 0) > 0 else "Falling")
+            mc2.metric("Relative Vol", f"{metrics.get('relative_volume', 1):.1f}x")
+            mc3.metric("OBV Trend", "Up" if metrics.get("on_balance_volume_trend", 0) > 0 else "Down")
 
         with tabs[2]:
             mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("Hist. Volatility", f"{metrics.get('historical_volatility', 0):.1f}%")
+            mc1.metric("Hist Vol", f"{metrics.get('historical_volatility', 0):.1f}%")
             mc2.metric("ATR %", f"{metrics.get('atr_percentage', 0):.2f}%")
-            mc3.metric("BB Bandwidth", f"{metrics.get('bollinger_squeeze', 0):.1f}%")
+            mc3.metric("BB Width", f"{metrics.get('bollinger_squeeze', 0):.1f}%")
 
         with tabs[3]:
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("RSI", f"{metrics.get('rsi', 50):.0f}")
             mc2.metric("MACD", "Bullish" if metrics.get("macd_signal", 0) > 0 else "Bearish")
             mc3.metric("Momentum", f"{metrics.get('momentum_score', 5):.1f}/10")
-            mc4.metric("ROC (10d)", f"{metrics.get('rate_of_change', 0):+.1f}%")
+            mc4.metric("ROC 10d", f"{metrics.get('rate_of_change', 0):+.1f}%")
 
         with tabs[4]:
             mc1, mc2, mc3, mc4 = st.columns(4)
@@ -259,291 +484,200 @@ elif page == "Stock Deep Dive":
             mc2.metric("Analyst Rating", f"{metrics.get('analyst_rating_change', 3):.1f}/5")
             mc3.metric("Insider Own%", f"{metrics.get('insider_buying', 0):.1f}%")
 
-    # Synthesis reports
+    # AI Synthesis
     st.markdown("---")
-    st.subheader("AI Synthesis Reports")
+    st.markdown("### AI Synthesis")
 
-    tab_d, tab_s, tab_p = st.tabs(["Data Analysis", "Sentiment Analysis", "Prediction Analysis"])
-
+    tab_d, tab_s, tab_p = st.tabs(["Data Analysis", "Sentiment", "Predictions"])
     with tab_d:
-        st.markdown(report.get("data_summary", "No data synthesis available."))
+        st.markdown(report.get("data_summary", "Not available yet."))
     with tab_s:
-        st.markdown(report.get("sentiment_summary", "No sentiment synthesis available."))
+        st.markdown(report.get("sentiment_summary", "Not available yet."))
     with tab_p:
-        st.markdown(report.get("prediction_summary", "No prediction synthesis available."))
+        st.markdown(report.get("prediction_summary", "Not available yet."))
 
-    # Recommendation
-    st.markdown("---")
     if report.get("recommendation"):
-        st.success(f"**Final Recommendation:** {report['recommendation']}")
+        st.markdown("---")
+        st.success(f"**Recommendation:** {report['recommendation']}")
 
-    # Individual agent analyses
+    # Agent verdict distribution
     st.markdown("---")
-    st.subheader("Individual Agent Analyses (32+)")
-
+    st.markdown("### Agent Analyses")
     all_analyses = get_all_analyses_for_ticker(selected)
+
     if all_analyses:
-        # Verdict distribution chart
-        verdict_counts = {}
+        vc = {}
         for a in all_analyses:
             v = a.get("verdict", "NEUTRAL")
-            verdict_counts[v] = verdict_counts.get(v, 0) + 1
+            vc[v] = vc.get(v, 0) + 1
 
         fig = go.Figure(data=[go.Pie(
-            labels=list(verdict_counts.keys()),
-            values=list(verdict_counts.values()),
-            hole=0.4,
-            marker_colors=[verdict_color(v) for v in verdict_counts.keys()],
+            labels=list(vc.keys()), values=list(vc.values()),
+            hole=0.5,
+            marker_colors=[VERDICT_COLORS.get(v, "#8B8589") for v in vc],
         )])
-        fig.update_layout(title="Agent Verdict Distribution", height=350)
+        fig.update_layout(**CHART_LAYOUT, height=300, title="Agent Verdict Split")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Score distribution
-        scores = [a.get("score", 5) for a in all_analyses if a.get("score")]
-        if scores:
-            fig2 = go.Figure(data=[go.Histogram(x=scores, nbinsx=10)])
-            fig2.update_layout(title="Agent Score Distribution", xaxis_title="Score", yaxis_title="Count", height=300)
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Individual analyses
         for a in all_analyses:
-            verdict = a.get("verdict", "?")
-            with st.expander(
-                f"{verdict_emoji(verdict)} {a.get('agent_name', '?')} — {verdict} "
-                f"(Score: {a.get('score', 0)}/10, Conf: {a.get('confidence', 0):.0%})"
-            ):
+            v = a.get("verdict", "?")
+            with st.expander(f"{a.get('agent_name', '?')} | {v} | Score: {a.get('score', 0)}/10"):
                 st.markdown(f"**Role:** {a.get('agent_role', 'N/A')}")
                 st.markdown(f"**Reasoning:** {a.get('reasoning', 'N/A')}")
-
-                if a.get("key_points"):
-                    points = json.loads(a["key_points"]) if isinstance(a["key_points"], str) else a["key_points"]
-                    st.markdown("**Key Points:**")
-                    for p in points:
-                        st.markdown(f"- {p}")
-
                 col1, col2 = st.columns(2)
                 with col1:
-                    if a.get("catalysts"):
-                        cats = json.loads(a["catalysts"]) if isinstance(a["catalysts"], str) else a["catalysts"]
-                        st.markdown("**Catalysts:**")
-                        for c in cats:
-                            st.markdown(f"- ✅ {c}")
+                    st.markdown("**Catalysts:**")
+                    for c in safe_json(a.get("catalysts")):
+                        st.markdown(f"- {c}")
                 with col2:
-                    if a.get("risks"):
-                        risks = json.loads(a["risks"]) if isinstance(a["risks"], str) else a["risks"]
-                        st.markdown("**Risks:**")
-                        for r in risks:
-                            st.markdown(f"- ⚠️ {r}")
+                    st.markdown("**Risks:**")
+                    for r in safe_json(a.get("risks")):
+                        st.markdown(f"- {r}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # PAGE: AGENT REPORTS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 elif page == "Agent Reports":
-    st.title("Agent-by-Agent Full Reports")
+    st.markdown('<p class="hero-text">Agent Reports</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">36 AI ANALYSTS | EVERY PERSPECTIVE | FULL DETAIL</p>', unsafe_allow_html=True)
 
     reports = get_latest_reports(limit=20)
     tickers = [r["ticker"] for r in reports]
 
     if not tickers:
-        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.info("No data yet.")
         st.stop()
 
-    selected = st.selectbox("Select Stock to View All Agent Reports", tickers)
+    selected = st.selectbox("Select Stock", tickers)
     all_analyses = get_all_analyses_for_ticker(selected)
 
     if not all_analyses:
-        st.warning(f"No agent analyses for {selected}")
+        st.warning(f"No analyses for {selected}")
         st.stop()
 
     report = get_report_for_ticker(selected)
     company_name = report.get("company_name", selected) if report else selected
-
     st.markdown(f"### {company_name} ({selected})")
 
-    # ── Summary Stats ─────────────────────────────────────────────────────
+    # Summary stats
     total = len(all_analyses)
     buy_agents = [a for a in all_analyses if "BUY" in a.get("verdict", "")]
     sell_agents = [a for a in all_analyses if "SELL" in a.get("verdict", "")]
-    neutral_agents = [a for a in all_analyses if a.get("verdict") == "NEUTRAL"]
-    error_agents = [a for a in all_analyses if a.get("verdict") == "ERROR"]
-
     avg_score = sum(a.get("score", 5) for a in all_analyses) / max(total, 1)
     avg_conf = sum(a.get("confidence", 0.5) for a in all_analyses) / max(total, 1)
-    max_score_agent = max(all_analyses, key=lambda a: a.get("score", 0))
-    min_score_agent = min(all_analyses, key=lambda a: a.get("score", 10))
+    max_agent = max(all_analyses, key=lambda a: a.get("score", 0))
+    min_agent = min(all_analyses, key=lambda a: a.get("score", 10))
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Agents", total)
-    c2.metric("Bullish", len(buy_agents), delta=f"{len(buy_agents)/total*100:.0f}%")
-    c3.metric("Bearish", len(sell_agents), delta=f"-{len(sell_agents)/total*100:.0f}%")
+    c2.metric("Bullish", len(buy_agents))
+    c3.metric("Bearish", len(sell_agents))
     c4.metric("Avg Score", f"{avg_score:.1f}/10")
     c5.metric("Avg Confidence", f"{avg_conf:.0%}")
 
+    # Most bullish vs bearish
     st.markdown("---")
-
-    # ── Most Bullish & Most Bearish ───────────────────────────────────────
     col_bull, col_bear = st.columns(2)
     with col_bull:
-        st.markdown(f"**Most Bullish Agent:**")
-        st.markdown(
-            f"**{max_score_agent.get('agent_name', '?')}** — "
-            f"Score: {max_score_agent.get('score', 0)}/10 | "
-            f"{max_score_agent.get('verdict', '?')}"
-        )
-        st.caption(max_score_agent.get("reasoning", "")[:200])
+        st.markdown(f"**Most Bullish:** {max_agent.get('agent_name', '?')}")
+        st.markdown(f"Score: {max_agent.get('score', 0)}/10 | {max_agent.get('verdict', '?')}")
+        st.caption(str(max_agent.get("reasoning", ""))[:250])
     with col_bear:
-        st.markdown(f"**Most Bearish Agent:**")
-        st.markdown(
-            f"**{min_score_agent.get('agent_name', '?')}** — "
-            f"Score: {min_score_agent.get('score', 0)}/10 | "
-            f"{min_score_agent.get('verdict', '?')}"
-        )
-        st.caption(min_score_agent.get("reasoning", "")[:200])
+        st.markdown(f"**Most Bearish:** {min_agent.get('agent_name', '?')}")
+        st.markdown(f"Score: {min_agent.get('score', 0)}/10 | {min_agent.get('verdict', '?')}")
+        st.caption(str(min_agent.get("reasoning", ""))[:250])
 
     st.markdown("---")
 
-    # ── Verdict & Score Charts ────────────────────────────────────────────
-    chart_col1, chart_col2 = st.columns(2)
+    # Charts
+    chart1, chart2 = st.columns(2)
 
-    with chart_col1:
-        verdict_counts = {}
+    with chart1:
+        vc = {}
         for a in all_analyses:
             v = a.get("verdict", "NEUTRAL")
-            verdict_counts[v] = verdict_counts.get(v, 0) + 1
+            vc[v] = vc.get(v, 0) + 1
         fig = go.Figure(data=[go.Pie(
-            labels=list(verdict_counts.keys()),
-            values=list(verdict_counts.values()),
-            hole=0.4,
-            marker_colors=[verdict_color(v) for v in verdict_counts.keys()],
+            labels=list(vc.keys()), values=list(vc.values()),
+            hole=0.5, marker_colors=[VERDICT_COLORS.get(v, "#8B8589") for v in vc],
         )])
-        fig.update_layout(title="Verdict Distribution", height=300, margin=dict(t=40, b=20))
+        fig.update_layout(**CHART_LAYOUT, height=320, title="Verdict Distribution")
         st.plotly_chart(fig, use_container_width=True)
 
-    with chart_col2:
-        agent_names = [a.get("agent_name", "?").split(" - ")[0] for a in all_analyses]
-        agent_scores = [a.get("score", 5) for a in all_analyses]
-        score_colors = ["#00ff88" if s >= 7 else "#ff3333" if s <= 4 else "#ffaa00" for s in agent_scores]
-
-        fig2 = go.Figure(data=[go.Bar(
-            x=agent_scores, y=agent_names,
-            orientation="h",
-            marker_color=score_colors,
-        )])
-        fig2.update_layout(
-            title="Score by Agent", height=max(400, total * 22),
-            xaxis_title="Score", yaxis=dict(autorange="reversed"),
-            margin=dict(l=10, t=40, b=20),
-        )
+    with chart2:
+        names = [a.get("agent_name", "?").split(" - ")[0] for a in all_analyses]
+        scores = [a.get("score", 5) for a in all_analyses]
+        colors = [VERDICT_COLORS.get(a.get("verdict", "NEUTRAL"), "#D4A574") for a in all_analyses]
+        fig2 = go.Figure(data=[go.Bar(x=scores, y=names, orientation="h", marker_color=colors)])
+        fig2.update_layout(**CHART_LAYOUT, height=max(400, total * 22),
+                           title="Score by Agent", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig2, use_container_width=True)
 
-    # ── Confidence vs Score Scatter ───────────────────────────────────────
-    st.subheader("Confidence vs Score")
-    scatter_data = pd.DataFrame([{
+    # Confidence vs Score scatter
+    st.markdown("### Confidence vs Score")
+    scatter_df = pd.DataFrame([{
         "Agent": a.get("agent_name", "?"),
         "Score": a.get("score", 5),
         "Confidence": a.get("confidence", 0.5),
         "Verdict": a.get("verdict", "NEUTRAL"),
     } for a in all_analyses])
 
-    fig3 = px.scatter(
-        scatter_data, x="Score", y="Confidence",
-        color="Verdict", hover_data=["Agent"],
-        color_discrete_map={
-            "STRONG_BUY": "#00ff88", "BUY": "#44cc44",
-            "NEUTRAL": "#ffaa00",
-            "SELL": "#cc4444", "STRONG_SELL": "#ff3333",
-        },
-        title="Agent Confidence vs Score",
-    )
-    fig3.update_layout(height=400)
+    fig3 = px.scatter(scatter_df, x="Score", y="Confidence", color="Verdict",
+                      hover_data=["Agent"],
+                      color_discrete_map=VERDICT_COLORS)
+    fig3.update_layout(**CHART_LAYOUT, height=400)
     st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("---")
 
-    # ── Filter by Verdict ─────────────────────────────────────────────────
-    st.subheader("Detailed Agent Reports")
-    filter_verdict = st.multiselect(
-        "Filter by Verdict",
-        ["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL", "ERROR"],
-        default=["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL"],
-    )
+    # Filter & sort
+    st.markdown("### Detailed Reports")
+    filter_v = st.multiselect("Filter by Verdict",
+                              ["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL", "ERROR"],
+                              default=["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL"])
+    sort_by = st.radio("Sort", ["Score (High)", "Score (Low)", "Confidence", "Name"], horizontal=True)
 
-    sort_by = st.radio("Sort by", ["Score (High to Low)", "Score (Low to High)", "Confidence", "Agent Name"], horizontal=True)
-
-    filtered = [a for a in all_analyses if a.get("verdict", "NEUTRAL") in filter_verdict]
-
-    if sort_by == "Score (High to Low)":
+    filtered = [a for a in all_analyses if a.get("verdict", "NEUTRAL") in filter_v]
+    if sort_by == "Score (High)":
         filtered.sort(key=lambda a: a.get("score", 0), reverse=True)
-    elif sort_by == "Score (Low to High)":
+    elif sort_by == "Score (Low)":
         filtered.sort(key=lambda a: a.get("score", 0))
     elif sort_by == "Confidence":
         filtered.sort(key=lambda a: a.get("confidence", 0), reverse=True)
     else:
         filtered.sort(key=lambda a: a.get("agent_name", ""))
 
-    # ── Full Agent Cards ──────────────────────────────────────────────────
     for i, a in enumerate(filtered):
-        verdict = a.get("verdict", "?")
-        agent_name = a.get("agent_name", "Unknown Agent")
+        v = a.get("verdict", "?")
+        name = a.get("agent_name", "Unknown")
         score = a.get("score", 0)
-        confidence = a.get("confidence", 0)
-        reasoning = a.get("reasoning", "No reasoning provided")
-        role = a.get("agent_role", "N/A")
+        conf = a.get("confidence", 0)
 
-        with st.expander(
-            f"{verdict_emoji(verdict)} **{agent_name}** | "
-            f"{verdict} | Score: {score}/10 | Confidence: {confidence:.0%}",
-            expanded=(i < 3),  # Auto-expand top 3
-        ):
-            # Header row
+        with st.expander(f"{name} | {v} | {score}/10 | {conf:.0%}", expanded=(i < 3)):
             mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Verdict", verdict)
+            mc1.metric("Verdict", v)
             mc2.metric("Score", f"{score}/10")
-            mc3.metric("Confidence", f"{confidence:.0%}")
-            mc4.metric("Role", role.replace("_", " ").title())
+            mc3.metric("Confidence", f"{conf:.0%}")
+            mc4.metric("Role", a.get("agent_role", "N/A").replace("_", " ").title())
 
-            # Full reasoning
-            st.markdown("---")
-            st.markdown("**Full Analysis & Reasoning:**")
-            st.markdown(reasoning)
+            st.markdown("**Analysis:**")
+            st.markdown(a.get("reasoning", "N/A"))
 
-            # Key points
-            if a.get("key_points"):
-                points = json.loads(a["key_points"]) if isinstance(a["key_points"], str) else a["key_points"]
-                if points:
-                    st.markdown("**Key Points:**")
-                    for p in points:
-                        st.markdown(f"- {p}")
+            for p in safe_json(a.get("key_points")):
+                st.markdown(f"- {p}")
 
-            # Catalysts & Risks side by side
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("**Catalysts (Bull Arguments):**")
-                if a.get("catalysts"):
-                    cats = json.loads(a["catalysts"]) if isinstance(a["catalysts"], str) else a["catalysts"]
-                    if cats:
-                        for c in cats:
-                            st.markdown(f"- ✅ {c}")
-                    else:
-                        st.caption("None identified")
-                else:
-                    st.caption("None identified")
-
+                st.markdown("**Catalysts:**")
+                for c in safe_json(a.get("catalysts")):
+                    st.markdown(f"- {c}")
             with col2:
-                st.markdown("**Risks (Bear Arguments):**")
-                if a.get("risks"):
-                    risks = json.loads(a["risks"]) if isinstance(a["risks"], str) else a["risks"]
-                    if risks:
-                        for r in risks:
-                            st.markdown(f"- ⚠️ {r}")
-                    else:
-                        st.caption("None identified")
-                else:
-                    st.caption("None identified")
+                st.markdown("**Risks:**")
+                for r in safe_json(a.get("risks")):
+                    st.markdown(f"- {r}")
 
-            # Raw response (collapsible within collapsible)
             if a.get("raw_response"):
                 raw = a["raw_response"]
                 if isinstance(raw, str):
@@ -551,97 +685,68 @@ elif page == "Agent Reports":
                         raw = json.loads(raw)
                     except json.JSONDecodeError:
                         pass
-                st.markdown("**Raw Agent Response:**")
-                st.json(raw if isinstance(raw, dict) else {"raw": str(raw)[:3000]})
+                st.markdown("**Raw Response:**")
+                st.json(raw if isinstance(raw, dict) else {"raw": str(raw)[:2000]})
 
-    # ── Synthesis Reports ─────────────────────────────────────────────────
-    if report:
+    # CIO Verdict
+    if report and report.get("full_report_json"):
         st.markdown("---")
-        st.subheader("Aggregator Synthesis Reports")
+        st.markdown("### Final CIO Verdict")
+        full = json.loads(report["full_report_json"]) if isinstance(report["full_report_json"], str) else report["full_report_json"]
 
-        st.markdown("**Data Synthesis (What the numbers say):**")
-        st.info(report.get("data_summary", "Not available"))
+        v1, v2, v3 = st.columns(3)
+        v1.metric("Verdict", full.get("overall_verdict", "N/A"))
+        v2.metric("Score", f"{full.get('overall_score', 0)}/10")
+        v3.metric("Conviction", str(full.get("conviction", "N/A")).replace("_", " ").title())
 
-        st.markdown("**Sentiment Synthesis (What the mood is):**")
-        st.info(report.get("sentiment_summary", "Not available"))
-
-        st.markdown("**Prediction Synthesis (What's likely to happen):**")
-        st.info(report.get("prediction_summary", "Not available"))
-
-        st.markdown("---")
-        st.markdown("**Final CIO Verdict:**")
-
-        if report.get("full_report_json"):
-            full = json.loads(report["full_report_json"]) if isinstance(report["full_report_json"], str) else report["full_report_json"]
-
-            v1, v2, v3 = st.columns(3)
-            v1.metric("Overall Verdict", full.get("overall_verdict", "N/A"))
-            v2.metric("Overall Score", f"{full.get('overall_score', 0)}/10")
-            v3.metric("Conviction", full.get("conviction", "N/A").replace("_", " ").title())
-
-            if full.get("bull_case"):
-                st.success(f"**Bull Case:** {full['bull_case']}")
-            if full.get("bear_case"):
-                st.error(f"**Bear Case:** {full['bear_case']}")
-            if full.get("consensus_summary"):
-                st.markdown(f"**Consensus:** {full['consensus_summary']}")
-            if full.get("entry_strategy"):
-                st.markdown(f"**Entry Strategy:** {full['entry_strategy']}")
-            if full.get("position_size"):
-                st.markdown(f"**Suggested Position Size:** {full['position_size']}")
-            if full.get("time_horizon"):
-                st.markdown(f"**Time Horizon:** {full['time_horizon']}")
-            if full.get("exit_triggers"):
-                triggers = full["exit_triggers"]
-                if isinstance(triggers, list):
-                    st.markdown("**Exit Triggers:**")
-                    for t in triggers:
-                        st.markdown(f"- {t}")
-
-        if report.get("recommendation"):
-            st.markdown("---")
-            st.success(f"**FINAL RECOMMENDATION:** {report['recommendation']}")
+        if full.get("bull_case"):
+            st.success(f"**Bull Case:** {full['bull_case']}")
+        if full.get("bear_case"):
+            st.error(f"**Bear Case:** {full['bear_case']}")
+        if full.get("entry_strategy"):
+            st.markdown(f"**Entry:** {full['entry_strategy']}")
+        if full.get("position_size"):
+            st.markdown(f"**Position Size:** {full['position_size']}")
+        if full.get("time_horizon"):
+            st.markdown(f"**Time Horizon:** {full['time_horizon']}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # PAGE: RESEARCH REPORTS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 elif page == "Research Reports":
-    st.title("Research & News Cross-Reference")
-    st.markdown("*8 research agents verify whether company narratives match reality*")
+    st.markdown('<p class="hero-text">Research Reports</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">8 AGENTS | NEWS | EARNINGS | ANNUAL REPORTS</p>', unsafe_allow_html=True)
 
     reports = get_latest_reports(limit=20)
     tickers = [r["ticker"] for r in reports]
 
     if not tickers:
-        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.info("No data yet.")
         st.stop()
 
     selected = st.selectbox("Select Stock", tickers, key="research_stock")
     research = get_research_analyses_for_ticker(selected)
 
     if not research:
-        st.info(f"No research agent data for {selected}. Run the full pipeline to generate research reports.")
+        st.info(f"No research data for {selected}. Run `python main.py` for full pipeline.")
         st.stop()
 
     report = get_report_for_ticker(selected)
     company_name = report.get("company_name", selected) if report else selected
     st.markdown(f"### {company_name} ({selected})")
 
-    # Summary metrics
     total = len(research)
     buy_r = sum(1 for a in research if "BUY" in a.get("verdict", ""))
     sell_r = sum(1 for a in research if "SELL" in a.get("verdict", ""))
-    avg_score_r = sum(a.get("score", 5) for a in research) / max(total, 1)
+    avg_r = sum(a.get("score", 5) for a in research) / max(total, 1)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Research Agents", total)
     c2.metric("Bullish", buy_r)
     c3.metric("Bearish", sell_r)
-    c4.metric("Avg Score", f"{avg_score_r:.1f}/10")
-
-    st.markdown("---")
+    c4.metric("Avg Score", f"{avg_r:.1f}/10")
 
     # Compare research vs base agents
     all_analyses = get_all_analyses_for_ticker(selected)
@@ -650,45 +755,38 @@ elif page == "Research Reports":
         "research_cross_check", "management_credibility", "competitive_intel",
         "macro_news_correlator", "narrative_vs_numbers",
     }
-    base_analyses = [a for a in all_analyses if a.get("agent_role") not in research_roles]
+    base = [a for a in all_analyses if a.get("agent_role") not in research_roles]
 
-    if base_analyses:
-        base_avg = sum(a.get("score", 5) for a in base_analyses) / max(len(base_analyses), 1)
-        delta = avg_score_r - base_avg
+    if base:
+        base_avg = sum(a.get("score", 5) for a in base) / max(len(base), 1)
+        delta = avg_r - base_avg
 
-        st.subheader("Research vs Base Agent Comparison")
+        st.markdown("---")
+        st.markdown("### Research vs Base Agents")
         col1, col2, col3 = st.columns(3)
-        col1.metric("Base Agents Avg Score", f"{base_avg:.1f}/10")
-        col2.metric("Research Agents Avg Score", f"{avg_score_r:.1f}/10")
+        col1.metric("Base Avg", f"{base_avg:.1f}/10")
+        col2.metric("Research Avg", f"{avg_r:.1f}/10")
         col3.metric("Delta", f"{delta:+.1f}", delta_color="normal")
 
         if abs(delta) > 1.5:
             if delta > 0:
-                st.success("Research agents are MORE bullish than base agents — news/earnings data supports the thesis")
+                st.success("Research agents are MORE bullish  --  data supports thesis")
             else:
-                st.error("Research agents are MORE bearish than base agents — news/earnings data raises concerns")
-        st.markdown("---")
+                st.error("Research agents are MORE bearish  --  data raises concerns")
 
-    # Individual research agent cards
-    st.subheader("Detailed Research Agent Reports")
+    st.markdown("---")
+    st.markdown("### Research Agent Details")
+
     for a in research:
-        verdict = a.get("verdict", "?")
-        agent_name = a.get("agent_name", "Unknown")
-        score = a.get("score", 0)
-        confidence = a.get("confidence", 0)
-
-        with st.expander(
-            f"{verdict_emoji(verdict)} **{agent_name}** | {verdict} | Score: {score}/10",
-            expanded=True,
-        ):
+        v = a.get("verdict", "?")
+        with st.expander(f"{a.get('agent_name', '?')} | {v} | Score: {a.get('score', 0)}/10", expanded=True):
             mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("Verdict", verdict)
-            mc2.metric("Score", f"{score}/10")
-            mc3.metric("Confidence", f"{confidence:.0%}")
+            mc1.metric("Verdict", v)
+            mc2.metric("Score", f"{a.get('score', 0)}/10")
+            mc3.metric("Confidence", f"{a.get('confidence', 0):.0%}")
 
             st.markdown(f"**Analysis:** {a.get('reasoning', 'N/A')}")
 
-            # Research-specific fields
             raw = a.get("raw_response", "{}")
             if isinstance(raw, str):
                 try:
@@ -698,42 +796,35 @@ elif page == "Research Reports":
             else:
                 raw_data = raw if isinstance(raw, dict) else {}
 
-            reality_check = raw_data.get("reality_check", "")
-            narrative_gap = raw_data.get("narrative_gap", "")
+            if raw_data.get("reality_check"):
+                st.info(f"**Reality Check:** {raw_data['reality_check']}")
+            if raw_data.get("narrative_gap"):
+                st.warning(f"**Narrative Gap:** {raw_data['narrative_gap']}")
 
-            if reality_check:
-                st.info(f"**Reality Check:** {reality_check}")
-            if narrative_gap:
-                st.warning(f"**Narrative Gap:** {narrative_gap}")
-
-            if a.get("key_points"):
-                points = json.loads(a["key_points"]) if isinstance(a["key_points"], str) else a["key_points"]
-                if points:
-                    st.markdown("**Key Findings:**")
-                    for p in points:
-                        st.markdown(f"- {p}")
+            for p in safe_json(a.get("key_points")):
+                st.markdown(f"- {p}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # PAGE: QUANT PREDICTIONS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 elif page == "Quant Predictions":
-    st.title("Quantitative Prediction Engine")
-    st.markdown("*Pure math models — fair value, support/resistance, Monte Carlo simulations*")
+    st.markdown('<p class="hero-text">Quant Predictions</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">PURE MATH | FAIR VALUE | MONTE CARLO | LEVELS</p>', unsafe_allow_html=True)
 
     reports = get_latest_reports(limit=20)
     tickers = [r["ticker"] for r in reports]
 
     if not tickers:
-        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.info("No data yet.")
         st.stop()
 
     selected = st.selectbox("Select Stock", tickers, key="quant_stock")
     quant = get_quant_predictions_for_ticker(selected)
 
     if not quant:
-        st.info(f"No quant predictions for {selected}. Run: `python main.py` or `python main.py --quant-only`")
+        st.info(f"No quant data for {selected}. Run `python main.py --quant-only`")
         st.stop()
 
     report = get_report_for_ticker(selected)
@@ -745,256 +836,226 @@ elif page == "Quant Predictions":
     predictions = quant.get("predictions_json", {})
     summary = quant.get("summary_json", {})
 
-    # ── Summary Row ──
     current_price = summary.get("current_price") or valuations.get("current_price", 0)
     fair_value = valuations.get("composite_fair_value")
     upside = valuations.get("composite_upside")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Current Price", f"₹{current_price:.2f}" if current_price else "N/A")
-    c2.metric("Fair Value (Composite)", f"₹{fair_value:.2f}" if fair_value else "N/A")
-    c3.metric("Upside/Downside", f"{upside:+.1f}%" if upside is not None else "N/A",
-              delta_color="normal")
+    c1.metric("Current Price", format_inr(current_price))
+    c2.metric("Fair Value", format_inr(fair_value))
+    c3.metric("Upside", f"{upside:+.1f}%" if upside is not None else "N/A", delta_color="normal")
     mc = predictions.get("monte_carlo", {})
-    c4.metric("P(Up in 30d)", f"{mc.get('prob_positive', 'N/A')}%"
-              if mc.get("prob_positive") is not None else "N/A")
+    c4.metric("P(Up 30d)", f"{mc.get('prob_positive', 'N/A')}%" if mc.get("prob_positive") is not None else "N/A")
 
     st.markdown("---")
 
-    # ── Valuation Models ──
-    st.subheader("Fair Value Estimates")
+    # Valuation gauges
+    st.markdown("### Fair Value Estimates")
+    gcol1, gcol2, gcol3 = st.columns(3)
 
-    val_tab1, val_tab2, val_tab3 = st.tabs(["Gauge Charts", "Comparison Table", "Model Details"])
+    for col, (name, key) in zip(
+        [gcol1, gcol2, gcol3],
+        [("Graham Number", "graham_number"), ("DCF Value", "dcf_value"), ("PEG Value", "peg_value")]
+    ):
+        val = valuations.get(key)
+        with col:
+            if val and current_price:
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number+delta",
+                    value=current_price,
+                    delta={"reference": val, "relative": True, "valueformat": ".1%"},
+                    title={"text": name, "font": {"size": 14, "color": "#D4A574"}},
+                    number={"font": {"color": "#FAF3E0"}},
+                    gauge={
+                        "axis": {"range": [min(current_price, val) * 0.5, max(current_price, val) * 1.5],
+                                 "tickcolor": "#D4A574"},
+                        "bar": {"color": "#D4A574"},
+                        "steps": [
+                            {"range": [0, val * 0.8], "color": "rgba(135,168,120,0.3)"},
+                            {"range": [val * 0.8, val * 1.2], "color": "rgba(212,165,116,0.3)"},
+                            {"range": [val * 1.2, max(current_price, val) * 1.5], "color": "rgba(183,110,121,0.3)"},
+                        ],
+                        "threshold": {"line": {"color": "#98D4BB", "width": 3}, "thickness": 0.75, "value": val},
+                    },
+                ))
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#FAF3E0"),
+                                  height=250, margin=dict(t=50, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption(f"{name}: Insufficient data")
 
-    with val_tab1:
-        gcol1, gcol2, gcol3 = st.columns(3)
-        for col, (name, key) in zip(
-            [gcol1, gcol2, gcol3],
-            [("Graham Number", "graham_number"), ("DCF Value", "dcf_value"), ("PEG Value", "peg_value")]
-        ):
-            val = valuations.get(key)
-            with col:
-                if val:
-                    fig = go.Figure(go.Indicator(
-                        mode="gauge+number+delta",
-                        value=current_price,
-                        delta={"reference": val, "relative": True, "valueformat": ".1%"},
-                        title={"text": name},
-                        gauge={
-                            "axis": {"range": [min(current_price, val) * 0.5, max(current_price, val) * 1.5]},
-                            "bar": {"color": "#444"},
-                            "steps": [
-                                {"range": [0, val * 0.8], "color": "#00ff88"},
-                                {"range": [val * 0.8, val * 1.2], "color": "#ffaa00"},
-                                {"range": [val * 1.2, max(current_price, val) * 1.5], "color": "#ff3333"},
-                            ],
-                            "threshold": {
-                                "line": {"color": "blue", "width": 3},
-                                "thickness": 0.75,
-                                "value": val,
-                            },
-                        },
-                    ))
-                    fig.update_layout(height=250, margin=dict(t=40, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.caption(f"{name}: Insufficient data")
-
-    with val_tab2:
-        rows = []
-        for name, key, upside_key in [
-            ("Graham Number", "graham_number", "upside_graham"),
-            ("DCF (Discounted Cash Flow)", "dcf_value", "upside_dcf"),
-            ("PEG Ratio Fair Value", "peg_value", "upside_peg"),
-            ("Composite Average", "composite_fair_value", "composite_upside"),
-        ]:
-            val = valuations.get(key)
-            up = valuations.get(upside_key)
-            rows.append({
-                "Model": name,
-                "Fair Value": f"₹{val:.2f}" if val else "N/A",
-                "Current Price": f"₹{current_price:.2f}",
-                "Upside": f"{up:+.1f}%" if up is not None else "N/A",
-                "Signal": "UNDERVALUED" if up and up > 10 else "OVERVALUED" if up and up < -10 else "FAIR",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    with val_tab3:
-        st.markdown("""
-        **Graham Number**: `sqrt(22.5 * EPS * Book Value)` — Benjamin Graham's intrinsic value formula
-        **DCF**: Discounted Cash Flow — projects free cash flow 5 years forward, discounts at 10%
-        **PEG**: Price/Earnings-to-Growth — fair P/E = earnings growth rate (when PEG = 1.0)
-        """)
+    # Comparison table
+    rows = []
+    for name, key, up_key in [
+        ("Graham Number", "graham_number", "upside_graham"),
+        ("DCF", "dcf_value", "upside_dcf"),
+        ("PEG", "peg_value", "upside_peg"),
+        ("Composite", "composite_fair_value", "composite_upside"),
+    ]:
+        val = valuations.get(key)
+        up = valuations.get(up_key)
+        rows.append({
+            "Model": name,
+            "Fair Value": format_inr(val),
+            "Current": format_inr(current_price),
+            "Upside": f"{up:+.1f}%" if up is not None else "N/A",
+            "Signal": "UNDERVALUED" if up and up > 10 else "OVERVALUED" if up and up < -10 else "FAIR",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
-    # ── Support/Resistance Levels ──
-    st.subheader("Support & Resistance Levels")
-
+    # Support/Resistance
+    st.markdown("### Support & Resistance")
     fib = levels.get("fibonacci", {})
     pivots = levels.get("pivot_points", {})
     mas = levels.get("moving_averages", {})
 
-    # Price chart with levels
     all_levels = []
     if fib:
-        for name, val in fib.items():
-            if name.startswith("fib_") and val:
-                all_levels.append({"Level": f"Fib {name.replace('fib_', '')}", "Price": val, "Type": "Fibonacci"})
+        for n, v in fib.items():
+            if n.startswith("fib_") and v:
+                all_levels.append({"Level": f"Fib {n.replace('fib_', '')}", "Price": v, "Type": "Fibonacci"})
     if pivots:
-        for name, val in pivots.items():
-            if val:
-                all_levels.append({"Level": name.upper(), "Price": val, "Type": "Pivot"})
+        for n, v in pivots.items():
+            if v:
+                all_levels.append({"Level": n.upper(), "Price": v, "Type": "Pivot"})
     if mas:
-        for name, val in mas.items():
-            if val:
-                all_levels.append({"Level": name.upper(), "Price": val, "Type": "Moving Avg"})
+        for n, v in mas.items():
+            if v:
+                all_levels.append({"Level": n.upper(), "Price": v, "Type": "Moving Avg"})
 
     if all_levels:
         levels_df = pd.DataFrame(all_levels).sort_values("Price", ascending=False)
+        type_colors = {"Fibonacci": "#B76E79", "Pivot": "#D4A574", "Moving Avg": "#98D4BB"}
 
         fig = go.Figure()
-        colors = {"Fibonacci": "#9966ff", "Pivot": "#ff6600", "Moving Avg": "#0099ff"}
         for _, row in levels_df.iterrows():
-            fig.add_hline(
-                y=row["Price"], line_dash="dash",
-                line_color=colors.get(row["Type"], "#888"),
-                annotation_text=f"{row['Level']}: ₹{row['Price']:.2f}",
-                annotation_position="right",
-            )
+            fig.add_hline(y=row["Price"], line_dash="dash",
+                          line_color=type_colors.get(row["Type"], "#8B8589"),
+                          annotation_text=f"{row['Level']}: {format_inr(row['Price'])}",
+                          annotation_position="right")
+        if current_price:
+            fig.add_hline(y=current_price, line_color="#FAF3E0", line_width=3,
+                          annotation_text=f"Current: {format_inr(current_price)}")
 
-        fig.add_hline(y=current_price, line_color="white", line_width=3,
-                      annotation_text=f"Current: ₹{current_price:.2f}")
-        fig.update_layout(
-            title="Price Levels Map",
-            yaxis_title="Price (₹)",
-            height=500,
-            yaxis=dict(range=[min(l["Price"] for l in all_levels) * 0.95,
-                              max(l["Price"] for l in all_levels) * 1.05]),
-        )
+        fig.update_layout(**CHART_LAYOUT, height=500, title="Price Levels Map",
+                          yaxis=dict(range=[min(l["Price"] for l in all_levels) * 0.95,
+                                            max(l["Price"] for l in all_levels) * 1.05]))
         st.plotly_chart(fig, use_container_width=True)
-
-        # Table view
         st.dataframe(levels_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
-    # ── Monte Carlo Simulation ──
-    st.subheader("Monte Carlo Price Simulation (30-day)")
-
+    # Monte Carlo
+    st.markdown("### Monte Carlo Simulation (30-day)")
     mc = predictions.get("monte_carlo", {})
     if mc and not mc.get("error"):
-        mc_col1, mc_col2, mc_col3, mc_col4 = st.columns(4)
-        mc_col1.metric("Median Price (30d)", f"₹{mc.get('median_price', 0):.2f}")
-        mc_col2.metric("Expected Return", f"{mc.get('expected_return', 0):+.2f}%")
-        mc_col3.metric("P(Positive)", f"{mc.get('prob_positive', 0):.0f}%")
-        mc_col4.metric("Ann. Volatility", f"{mc.get('annualized_volatility', 0):.1f}%")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.metric("Median 30d", format_inr(mc.get("median_price", 0)))
+        mc2.metric("Expected Return", f"{mc.get('expected_return', 0):+.2f}%")
+        mc3.metric("P(Positive)", f"{mc.get('prob_positive', 0):.0f}%")
+        mc4.metric("Volatility", f"{mc.get('annualized_volatility', 0):.1f}%")
 
-        # Distribution chart
         percentiles = [
-            ("P10 (Bearish)", mc.get("p10", 0)),
+            ("P10", mc.get("p10", 0)),
             ("P25", mc.get("p25", 0)),
             ("Median", mc.get("median_price", 0)),
             ("P75", mc.get("p75", 0)),
-            ("P90 (Bullish)", mc.get("p90", 0)),
+            ("P90", mc.get("p90", 0)),
         ]
 
         fig = go.Figure()
         fig.add_trace(go.Bar(
-            x=[p[0] for p in percentiles],
-            y=[p[1] for p in percentiles],
-            marker_color=["#ff3333", "#ffaa00", "#ffffff", "#88cc88", "#00ff88"],
-            text=[f"₹{p[1]:.2f}" for p in percentiles],
-            textposition="outside",
+            x=[p[0] for p in percentiles], y=[p[1] for p in percentiles],
+            marker_color=["#B76E79", "#D4A574", "#FAF3E0", "#87A878", "#98D4BB"],
+            text=[format_inr(p[1]) for p in percentiles], textposition="outside",
+            textfont=dict(color="#FAF3E0"),
         ))
-        fig.add_hline(y=current_price, line_dash="dash", line_color="cyan",
-                      annotation_text=f"Current: ₹{current_price:.2f}")
-        fig.update_layout(title="30-Day Price Distribution", yaxis_title="Price (₹)", height=400)
+        if current_price:
+            fig.add_hline(y=current_price, line_dash="dash", line_color="#D4A574",
+                          annotation_text=f"Current: {format_inr(current_price)}")
+        fig.update_layout(**CHART_LAYOUT, height=400, title="30-Day Price Distribution")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Probabilities
-        st.markdown("**Probability Analysis:**")
-        p_col1, p_col2, p_col3 = st.columns(3)
-        p_col1.metric("P(Up >10%)", f"{mc.get('prob_up_10pct', 0):.0f}%")
-        p_col2.metric("P(Down >10%)", f"{mc.get('prob_down_10pct', 0):.0f}%")
-        p_col3.metric("Daily Volatility", f"{mc.get('daily_volatility', 0):.2f}%")
+        p1, p2, p3 = st.columns(3)
+        p1.metric("P(Up >10%)", f"{mc.get('prob_up_10pct', 0):.0f}%")
+        p2.metric("P(Down >10%)", f"{mc.get('prob_down_10pct', 0):.0f}%")
+        p3.metric("Daily Vol", f"{mc.get('daily_volatility', 0):.2f}%")
     else:
-        st.info("Monte Carlo simulation data not available.")
+        st.info("Monte Carlo data not available.")
 
     st.markdown("---")
 
-    # ── Mean Reversion ──
-    st.subheader("Mean Reversion Analysis")
-
+    # Mean Reversion
+    st.markdown("### Mean Reversion")
     mr = predictions.get("mean_reversion", {})
     if mr and not mr.get("error"):
-        mr_col1, mr_col2, mr_col3, mr_col4 = st.columns(4)
-        mr_col1.metric("Z-Score", f"{mr.get('z_score', 0):.2f}")
-        mr_col2.metric("Target (SMA)", f"₹{mr.get('target_price', 0):.2f}")
-        mr_col3.metric("Deviation", f"{mr.get('deviation_pct', 0):+.1f}%")
-        signal = mr.get("signal", "FAIR")
-        mr_col4.metric("Signal", signal)
+        mr1, mr2, mr3, mr4 = st.columns(4)
+        mr1.metric("Z-Score", f"{mr.get('z_score', 0):.2f}")
+        mr2.metric("Target (SMA)", format_inr(mr.get("target_price", 0)))
+        mr3.metric("Deviation", f"{mr.get('deviation_pct', 0):+.1f}%")
+        mr4.metric("Signal", mr.get("signal", "FAIR"))
 
-        # Z-score gauge
         fig = go.Figure(go.Indicator(
             mode="gauge+number",
             value=mr.get("z_score", 0),
-            title={"text": "Z-Score (distance from mean)"},
+            title={"text": "Z-Score", "font": {"color": "#D4A574"}},
+            number={"font": {"color": "#FAF3E0"}},
             gauge={
-                "axis": {"range": [-3, 3]},
-                "bar": {"color": "#444"},
+                "axis": {"range": [-3, 3], "tickcolor": "#D4A574"},
+                "bar": {"color": "#D4A574"},
                 "steps": [
-                    {"range": [-3, -2], "color": "#00ff88"},   # Oversold
-                    {"range": [-2, -1], "color": "#88cc88"},
-                    {"range": [-1, 1], "color": "#ffaa00"},    # Fair
-                    {"range": [1, 2], "color": "#cc8844"},
-                    {"range": [2, 3], "color": "#ff3333"},     # Overbought
+                    {"range": [-3, -2], "color": "rgba(135,168,120,0.4)"},
+                    {"range": [-2, -1], "color": "rgba(135,168,120,0.2)"},
+                    {"range": [-1, 1], "color": "rgba(212,165,116,0.2)"},
+                    {"range": [1, 2], "color": "rgba(183,110,121,0.2)"},
+                    {"range": [2, 3], "color": "rgba(183,110,121,0.4)"},
                 ],
             },
         ))
-        fig.update_layout(height=300)
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#FAF3E0"), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
         if mr.get("half_life_days"):
-            st.markdown(f"**Estimated mean reversion half-life:** {mr['half_life_days']:.0f} days")
-        st.markdown(f"**Bands:** ₹{mr.get('band_lower_2std', 0):.2f} (−2σ) → "
-                    f"₹{mr.get('band_lower_1std', 0):.2f} (−1σ) → "
-                    f"₹{mr.get('target_price', 0):.2f} (mean) → "
-                    f"₹{mr.get('band_upper_1std', 0):.2f} (+1σ) → "
-                    f"₹{mr.get('band_upper_2std', 0):.2f} (+2σ)")
+            st.markdown(f"**Mean reversion half-life:** {mr['half_life_days']:.0f} days")
+        st.markdown(
+            f"**Bands:** {format_inr(mr.get('band_lower_2std', 0))} (-2s) | "
+            f"{format_inr(mr.get('band_lower_1std', 0))} (-1s) | "
+            f"{format_inr(mr.get('target_price', 0))} (mean) | "
+            f"{format_inr(mr.get('band_upper_1std', 0))} (+1s) | "
+            f"{format_inr(mr.get('band_upper_2std', 0))} (+2s)"
+        )
     else:
         st.info("Mean reversion data not available.")
 
-    st.markdown("---")
-
-    # ── Bollinger Bands ──
-    st.subheader("Bollinger Band Position")
-
+    # Bollinger Bands
     bb = predictions.get("bollinger", {})
     if bb and not bb.get("error"):
-        bb_col1, bb_col2, bb_col3, bb_col4 = st.columns(4)
-        bb_col1.metric("Upper Band", f"₹{bb.get('upper', 0):.2f}")
-        bb_col2.metric("Middle (SMA20)", f"₹{bb.get('middle', 0):.2f}")
-        bb_col3.metric("Lower Band", f"₹{bb.get('lower', 0):.2f}")
-        bb_col4.metric("%B Position", f"{bb.get('percent_b', 50):.0f}%")
-
+        st.markdown("---")
+        st.markdown("### Bollinger Bands")
+        bb1, bb2, bb3, bb4 = st.columns(4)
+        bb1.metric("Upper", format_inr(bb.get("upper", 0)))
+        bb2.metric("Middle", format_inr(bb.get("middle", 0)))
+        bb3.metric("Lower", format_inr(bb.get("lower", 0)))
+        bb4.metric("%B", f"{bb.get('percent_b', 50):.0f}%")
         st.markdown(f"**Bandwidth:** {bb.get('bandwidth', 0):.1f}% | **Signal:** {bb.get('signal', 'NEUTRAL')}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE: AGENT CONSENSUS
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# PAGE: CONSENSUS HEATMAP
+# ==============================================================================
 
-elif page == "Agent Consensus":
-    st.title("Agent Consensus Heatmap")
+elif page == "Consensus Heatmap":
+    st.markdown('<p class="hero-text">Consensus Heatmap</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">ALL AGENTS x ALL STOCKS</p>', unsafe_allow_html=True)
 
     reports = get_latest_reports(limit=15)
 
     if not reports:
-        st.warning("No data yet. Run the scanner first.")
+        st.info("No data yet.")
         st.stop()
 
-    # Build consensus matrix
     data_rows = []
     for report in reports:
         ticker = report["ticker"]
@@ -1009,47 +1070,106 @@ elif page == "Agent Consensus":
 
     if data_rows:
         df = pd.DataFrame(data_rows)
-
-        # Heatmap: agents vs tickers
         pivot = df.pivot_table(index="Agent", columns="Ticker", values="Score", aggfunc="mean")
 
         fig = px.imshow(
-            pivot,
-            labels=dict(x="Stock", y="Agent", color="Score"),
-            aspect="auto",
-            color_continuous_scale="RdYlGn",
+            pivot, labels=dict(x="Stock", y="Agent", color="Score"),
+            aspect="auto", color_continuous_scale=["#B76E79", "#D4A574", "#FAF3E0", "#87A878", "#98D4BB"],
             zmin=1, zmax=10,
         )
-        fig.update_layout(height=max(400, len(pivot) * 25), title="Agent Scores by Stock")
+        fig.update_layout(**CHART_LAYOUT, height=max(400, len(pivot) * 25), title="Agent Scores by Stock")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Agreement table
-        st.subheader("Consensus Summary")
+        st.markdown("---")
+        st.markdown("### Summary")
         for report in reports:
             ticker = report["ticker"]
-            ticker_analyses = [r for r in data_rows if r["Ticker"] == ticker]
-            buy_pct = sum(1 for a in ticker_analyses if "BUY" in a["Verdict"]) / max(len(ticker_analyses), 1) * 100
-            avg_score = sum(a["Score"] for a in ticker_analyses) / max(len(ticker_analyses), 1)
-            st.markdown(
-                f"**{ticker}**: {buy_pct:.0f}% bullish | "
-                f"Avg score: {avg_score:.1f}/10 | "
-                f"Verdict: {report.get('overall_verdict', 'N/A')}"
-            )
+            ticker_data = [r for r in data_rows if r["Ticker"] == ticker]
+            buy_pct = sum(1 for a in ticker_data if "BUY" in a["Verdict"]) / max(len(ticker_data), 1) * 100
+            avg = sum(a["Score"] for a in ticker_data) / max(len(ticker_data), 1)
+            st.markdown(f"**{ticker}**: {buy_pct:.0f}% bullish | Avg: {avg:.1f}/10 | {report.get('overall_verdict', 'N/A')}")
+
+
+# ==============================================================================
+# PAGE: ANALYZE ANY STOCK
+# ==============================================================================
+
+elif page == "Analyze Any Stock":
+    st.markdown('<p class="hero-text">Analyze Any Stock</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">ENTER ANY NSE/BSE TICKER FOR FULL ANALYSIS</p>', unsafe_allow_html=True)
+
+    st.markdown("")
+    ticker_input = st.text_input(
+        "Enter NSE ticker symbol (e.g. RELIANCE, TCS, INFY, ZOMATO)",
+        placeholder="RELIANCE",
+    )
+
+    if ticker_input:
+        ticker = ticker_input.strip().upper()
+        if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+            ticker = f"{ticker}.NS"
+
+        # Check if we already have data
+        existing = get_report_for_ticker(ticker)
+        if existing:
+            st.success(f"Found existing analysis for {ticker}. View it in Stock Deep Dive or Agent Reports.")
+
+        if st.button(f"Run Full Analysis on {ticker}", type="primary"):
+            from pipeline.on_demand import analyze_single_stock
+
+            progress = st.progress(0, text="Starting analysis...")
+            status = st.empty()
+
+            def update_progress(step, total, msg):
+                progress.progress(step / total, text=msg)
+                status.markdown(f"**Step {step}/{total}:** {msg}")
+
+            with st.spinner("Running full pipeline..."):
+                result = analyze_single_stock(ticker, progress_callback=update_progress)
+
+            if result.get("success"):
+                progress.progress(1.0, text="Complete!")
+                st.success(f"Analysis complete for {ticker}!")
+
+                # Show quick results
+                report = get_report_for_ticker(ticker)
+                if report:
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Verdict", report.get("overall_verdict", "N/A"))
+                    c2.metric("Score", f"{report.get('overall_score', 0)}/10")
+                    c3.metric("Price", format_inr(report.get("current_price")))
+
+                    if report.get("consensus_summary"):
+                        st.markdown(f"**Consensus:** {report['consensus_summary']}")
+                    if report.get("recommendation"):
+                        st.info(f"**Recommendation:** {report['recommendation']}")
+
+                st.markdown("---")
+                st.markdown("Navigate to **Stock Deep Dive** or **Agent Reports** for full details.")
+            else:
+                st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
     else:
-        st.info("No agent analyses found yet.")
+        st.markdown("""
+        **How it works:**
+        1. Enter any NSE/BSE listed stock ticker
+        2. Click 'Run Full Analysis'
+        3. The system will compute 32+ metrics, run 36 AI agents + 8 research agents, and aggregate results
+        4. View detailed results in Stock Deep Dive, Agent Reports, or Quant Predictions pages
+        """)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # PAGE: SCAN HISTORY
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 
 elif page == "Scan History":
-    st.title("Scan History")
+    st.markdown('<p class="hero-text">Scan History</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">HISTORICAL SCAN DATA</p>', unsafe_allow_html=True)
 
     scans = get_latest_scan_results(limit=50)
 
     if not scans:
-        st.warning("No scan history yet.")
+        st.info("No scan history yet.")
         st.stop()
 
     df = pd.DataFrame(scans)
@@ -1058,18 +1178,15 @@ elif page == "Scan History":
     st.dataframe(
         df[["ticker", "company_name", "sector", "composite_score", "current_price", "market_cap", "scan_timestamp"]]
         .sort_values("composite_score", ascending=False),
-        use_container_width=True,
-        hide_index=True,
+        use_container_width=True, hide_index=True,
     )
 
-    # Score distribution
     fig = px.bar(
         df.sort_values("composite_score", ascending=True).tail(20),
-        x="composite_score", y="ticker",
-        orientation="h",
+        x="composite_score", y="ticker", orientation="h",
         title="Top 20 Composite Scores",
         color="composite_score",
-        color_continuous_scale="RdYlGn",
+        color_continuous_scale=["#B76E79", "#D4A574", "#98D4BB"],
     )
-    fig.update_layout(height=600)
+    fig.update_layout(**CHART_LAYOUT, height=600)
     st.plotly_chart(fig, use_container_width=True)
