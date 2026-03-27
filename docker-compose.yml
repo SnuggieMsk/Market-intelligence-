@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  scanner:
+    build: .
+    container_name: market-intel-scanner
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    command: python main.py --continuous
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    container_name: market-intel-dashboard
+    env_file: .env
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    command: streamlit run dashboard/app.py --server.port 8501 --server.headless true --server.address 0.0.0.0
+    restart: unless-stopped
+    depends_on:
+      - scanner

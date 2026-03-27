@@ -104,13 +104,19 @@ class LLMPool:
             limiter.acquire()
 
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=key)
-                model = genai.GenerativeModel(
-                    GEMINI_MODEL,
-                    system_instruction=system_instruction or None,
+                from google import genai
+
+                client = genai.Client(api_key=key)
+                contents = prompt
+                config = {"temperature": 0.7, "max_output_tokens": 4096}
+                if system_instruction:
+                    config["system_instruction"] = system_instruction
+
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                    config=config,
                 )
-                response = model.generate_content(prompt)
                 return response.text
 
             except Exception as e:
