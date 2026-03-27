@@ -1,6 +1,6 @@
 """
 Computes 32+ metrics for each stock to identify standout opportunities.
-All data sourced from yfinance (free, no API key).
+Primary: yfinance. Fallback: Yahoo Finance direct API via requests.
 Caches data locally to avoid redundant downloads.
 """
 
@@ -8,12 +8,17 @@ import os
 import json
 import time
 import numpy as np
+import pandas as pd
 import yfinance as yf
+import requests
 from typing import Optional
+from datetime import datetime, timedelta
 
 # ── Local Cache ───────────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "cache")
 CACHE_MAX_AGE = 3600  # 1 hour — re-fetch if older than this
+YFINANCE_MAX_RETRIES = 3
+YFINANCE_RETRY_DELAY = 5  # seconds
 
 
 def _cache_path(ticker: str) -> str:
@@ -47,10 +52,116 @@ def _save_cache(ticker: str, data: dict):
         pass  # Non-critical
 
 
+def _fetch_yahoo_direct(ticker: str) -> tuple:
+    """
+    Fallback: fetch data directly from Yahoo Finance API via requests.
+    Returns (hist_df, info_dict) or raises on failure.
+    """
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # Fetch historical data
+    period2 = int(time.time())
+    period1 = period2 - (365 * 24 * 3600)  # 1 year
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        f"?period1={period1}&period2={period2}&interval=1d"
+    )
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    result = data["chart"]["result"][0]
+    timestamps = result["timestamp"]
+    ohlcv = result["indicators"]["quote"][0]
+
+    hist = pd.DataFrame({
+        "Open": ohlcv["open"],
+        "High": ohlcv["high"],
+        "Low": ohlcv["low"],
+        "Close": ohlcv["close"],
+        "Volume": ohlcv["volume"],
+    }, index=pd.to_datetime(timestamps, unit="s"))
+    hist.dropna(inplace=True)
+
+    # Fetch info/fundamentals
+    info = {}
+    try:
+        meta = result.get("meta", {})
+        info["shortName"] = meta.get("shortName", ticker.split(".")[0])
+        info["marketCap"] = meta.get("marketCap", 0)
+        info["regularMarketPrice"] = meta.get("regularMarketPrice", 0)
+
+        # Try quoteSummary for fundamentals
+        info_url = (
+            f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+            f"?modules=defaultKeyStatistics,financialData,summaryDetail,assetProfile"
+        )
+        info_resp = requests.get(info_url, headers=headers, timeout=30)
+        if info_resp.status_code == 200:
+            modules = info_resp.json().get("quoteSummary", {}).get("result", [{}])[0]
+
+            profile = modules.get("assetProfile", {})
+            info["sector"] = profile.get("sector", "Unknown")
+            info["industry"] = profile.get("industry", "Unknown")
+
+            stats = modules.get("defaultKeyStatistics", {})
+            info["trailingPE"] = stats.get("trailingPE", {}).get("raw")
+            info["forwardPE"] = stats.get("forwardPE", {}).get("raw")
+            info["priceToBook"] = stats.get("priceToBook", {}).get("raw")
+            info["shortPercentOfFloat"] = stats.get("shortPercentOfFloat", {}).get("raw")
+            info["heldPercentInsiders"] = stats.get("heldPercentInsiders", {}).get("raw")
+
+            fin = modules.get("financialData", {})
+            info["debtToEquity"] = fin.get("debtToEquity", {}).get("raw")
+            info["revenueGrowth"] = fin.get("revenueGrowth", {}).get("raw")
+            info["earningsGrowth"] = fin.get("earningsGrowth", {}).get("raw")
+            info["freeCashflow"] = fin.get("freeCashflow", {}).get("raw")
+            info["recommendationMean"] = fin.get("recommendationMean", {}).get("raw")
+
+            summary = modules.get("summaryDetail", {})
+            info["marketCap"] = summary.get("marketCap", {}).get("raw", info.get("marketCap", 0))
+    except Exception:
+        pass  # Partial info is fine
+
+    return hist, info
+
+
+def _fetch_stock_data(ticker: str) -> tuple:
+    """
+    Fetch stock data with retry and fallback.
+    Tries yfinance first, then direct Yahoo API.
+    Returns (hist_df, info_dict).
+    """
+    # Try yfinance with retries
+    for attempt in range(YFINANCE_MAX_RETRIES):
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="1y")
+            if not hist.empty:
+                info = stock.info
+                return hist, info
+        except Exception as e:
+            err = str(e).lower()
+            if "rate" in err or "429" in err or "too many" in err:
+                wait = YFINANCE_RETRY_DELAY * (attempt + 1)
+                print(f"[yfinance] {ticker} rate limited, waiting {wait}s (attempt {attempt+1})")
+                time.sleep(wait)
+            else:
+                break  # Non-rate-limit error, try fallback
+
+    # Fallback: direct Yahoo Finance API
+    print(f"[yfinance] {ticker} falling back to direct Yahoo API...")
+    try:
+        hist, info = _fetch_yahoo_direct(ticker)
+        return hist, info
+    except Exception as e2:
+        raise RuntimeError(f"Both yfinance and direct API failed for {ticker}: {e2}")
+
+
 def compute_all_metrics(ticker: str) -> Optional[dict]:
     """
     Compute all 32+ metrics for a given ticker.
-    Uses local cache to avoid re-downloading within 1 hour.
+    Uses local cache, yfinance with retry, and direct Yahoo API fallback.
     Returns None if data is insufficient.
     """
     # Check cache first
@@ -60,9 +171,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         return cached
 
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1y")
-        info = stock.info
+        hist, info = _fetch_stock_data(ticker)
 
         if hist.empty or len(hist) < 50:
             return None
@@ -322,7 +431,3 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
     except Exception as e:
         print(f"[Metrics] Error computing metrics for {ticker}: {e}")
         return None
-
-
-# Need pandas for ATR calculation
-import pandas as pd

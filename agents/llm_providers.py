@@ -220,14 +220,57 @@ class LLMPool:
 
         raise RuntimeError(f"OpenRouter: exhausted {self.MAX_RETRIES} retries due to rate limits")
 
-    # ── Unified Call with Fallback Chain ──────────────────────────────────────
+    # ── Provider Health Tracking ─────────────────────────────────────────────
+
+    def __init_health(self):
+        """Track which providers are healthy vs temporarily down."""
+        if not hasattr(self, "_health"):
+            self._health = {
+                "gemini": {"failures": 0, "last_fail": 0},
+                "groq": {"failures": 0, "last_fail": 0},
+                "openrouter": {"failures": 0, "last_fail": 0},
+            }
+
+    def _mark_failed(self, provider: str):
+        self.__init_health()
+        self._health[provider]["failures"] += 1
+        self._health[provider]["last_fail"] = time.time()
+
+    def _mark_success(self, provider: str):
+        self.__init_health()
+        self._health[provider]["failures"] = 0
+
+    def _get_provider_order(self, prefer: str) -> list:
+        """
+        Smart ordering: preferred first, then sort remaining by health.
+        Providers that failed recently go to the back.
+        Providers that haven't been tried in 5+ min get a second chance.
+        """
+        self.__init_health()
+        now = time.time()
+
+        providers = ["gemini", "groq", "openrouter"]
+        # Reset health if last failure was >5 min ago (give them another chance)
+        for p in providers:
+            if now - self._health[p]["last_fail"] > 300:
+                self._health[p]["failures"] = 0
+
+        # Build order: preferred first, then healthiest
+        order = [prefer]
+        remaining = [p for p in providers if p != prefer]
+        remaining.sort(key=lambda p: self._health[p]["failures"])
+        order.extend(remaining)
+        return order
+
+    # ── Unified Call with Smart Fallback ──────────────────────────────────────
 
     def call_llm(self, prompt: str, system_instruction: str = "",
                  prefer: str = "gemini") -> str:
         """
-        Call LLM with automatic fallback chain.
-        Order: preferred provider → remaining providers.
-        All 429 errors are handled with backoff BEFORE falling back.
+        Call LLM with smart fallback chain.
+        - Routes to preferred provider first
+        - Falls back to healthiest remaining provider
+        - Tracks provider health to avoid hammering dead providers
         """
         all_providers = {
             "gemini": self.call_gemini,
@@ -235,11 +278,7 @@ class LLMPool:
             "openrouter": self.call_openrouter,
         }
 
-        # Build ordered fallback chain
-        order = [prefer]
-        for p in ["gemini", "groq", "openrouter"]:
-            if p not in order:
-                order.append(p)
+        order = self._get_provider_order(prefer)
 
         last_error = None
         for provider_name in order:
@@ -247,8 +286,11 @@ class LLMPool:
             if not fn:
                 continue
             try:
-                return fn(prompt, system_instruction)
+                result = fn(prompt, system_instruction)
+                self._mark_success(provider_name)
+                return result
             except Exception as e:
+                self._mark_failed(provider_name)
                 last_error = e
                 print(f"[LLM] {provider_name} failed: {e}, trying next provider...")
                 continue

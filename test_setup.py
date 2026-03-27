@@ -82,17 +82,16 @@ test("Stock universe (Nifty 50 + Next 50 + extras)", test_universe)
 # ── Test 4: yfinance Data Fetch ──────────────────────────────────────────────
 
 def test_yfinance():
-    import yfinance as yf
-    stock = yf.Ticker("RELIANCE.NS")
-    hist = stock.history(period="5d")
+    from scanner.metrics import _fetch_stock_data
+    hist, info = _fetch_stock_data("RELIANCE.NS")
     assert not hist.empty, "No price data returned for RELIANCE.NS"
     price = hist["Close"].iloc[-1]
     print(f"  RELIANCE.NS latest close: ₹{price:.2f}")
-    info = stock.info
     print(f"  Company: {info.get('shortName', 'N/A')}")
     print(f"  Market Cap: ₹{info.get('marketCap', 0):,.0f}")
+    print(f"  Data source: yfinance or direct Yahoo API (auto-fallback)")
 
-test("yfinance data fetch (RELIANCE.NS)", test_yfinance)
+test("Stock data fetch with fallback (RELIANCE.NS)", test_yfinance)
 
 
 # ── Test 5: Metrics Computation ──────────────────────────────────────────────

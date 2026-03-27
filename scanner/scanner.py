@@ -125,7 +125,8 @@ def scan_market() -> list:
     ) as progress:
         task = progress.add_task("Scanning stocks...", total=len(tickers))
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # Use 3 workers max to avoid Yahoo rate limits
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(compute_all_metrics, t): t for t in tickers}
 
             for future in as_completed(futures):

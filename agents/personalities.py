@@ -357,5 +357,11 @@ Be brutally honest about whether the current psychology supports or undermines t
     },
 ]
 
+# Distribute agents evenly across all 3 providers (round-robin)
+# This prevents overloading any single provider's rate limits
+_PROVIDERS = ["gemini", "groq", "openrouter"]
+for i, agent in enumerate(AGENT_PERSONALITIES):
+    agent["prefer_provider"] = _PROVIDERS[i % len(_PROVIDERS)]
+
 # Verify we have 32+ agents
 assert len(AGENT_PERSONALITIES) >= 32, f"Need 32+ agents, got {len(AGENT_PERSONALITIES)}"
