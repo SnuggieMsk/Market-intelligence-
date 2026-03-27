@@ -262,3 +262,166 @@ def run_agents_on_all_stocks(stocks: list) -> dict:
             time.sleep(2)
 
     return all_results
+
+
+# ── Research Agents ──────────────────────────────────────────────────────────
+
+RESEARCH_PROMPT_TEMPLATE = """
+{stock_context}
+
+{research_context}
+
+═══ EXISTING AGENT ANALYSIS SUMMARY ═══
+{existing_verdicts}
+
+═══ YOUR RESEARCH ANALYSIS TASK ═══
+
+You have access to BOTH the stock's quantitative metrics AND real-world research data
+(news, earnings, annual reports). Cross-reference them.
+
+Your job is to verify whether the other agents' analysis matches reality.
+Look for gaps between what the numbers say and what's actually happening in the real world.
+
+Respond in this exact JSON format:
+{{
+    "verdict": "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL",
+    "confidence": 0.0 to 1.0,
+    "score": 1.0 to 10.0,
+    "reasoning": "Your detailed 3-5 sentence analysis cross-referencing research data with metrics",
+    "key_points": ["point 1", "point 2", "point 3"],
+    "risks": ["risk from research data"],
+    "catalysts": ["catalyst from research data"],
+    "reality_check": "Does the company narrative match the numbers? Explain.",
+    "narrative_gap": "What are other agents missing that the news/data reveals?"
+}}
+
+Remember: You are {agent_name}. Stay in character. Be specific and data-driven.
+"""
+
+
+def _build_existing_verdicts_summary(analyses: list) -> str:
+    """Summarize base 36 agents' verdicts for research agents to cross-reference."""
+    if not analyses:
+        return "No prior analyses available."
+
+    buy_count = sum(1 for a in analyses if "BUY" in a.get("verdict", ""))
+    sell_count = sum(1 for a in analyses if "SELL" in a.get("verdict", ""))
+    neutral_count = len(analyses) - buy_count - sell_count
+    avg_score = sum(a.get("score", 5) for a in analyses) / max(len(analyses), 1)
+
+    lines = [
+        f"Total agents: {len(analyses)} | Buy: {buy_count} | Neutral: {neutral_count} | Sell: {sell_count}",
+        f"Average score: {avg_score:.1f}/10",
+        "",
+        "Top bull/bear views:",
+    ]
+
+    # Top 3 highest and lowest scores
+    sorted_analyses = sorted(analyses, key=lambda a: a.get("score", 5), reverse=True)
+    for a in sorted_analyses[:3]:
+        lines.append(f"  BULL: {a.get('agent_name', '?')} — {a.get('verdict', '?')} ({a.get('score', 0)}/10): {a.get('reasoning', '')[:100]}")
+    for a in sorted_analyses[-3:]:
+        lines.append(f"  BEAR: {a.get('agent_name', '?')} — {a.get('verdict', '?')} ({a.get('score', 0)}/10): {a.get('reasoning', '')[:100]}")
+
+    return "\n".join(lines)
+
+
+def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
+    """
+    Run 8 research agents that cross-reference news/earnings/reports
+    against the base 36 agents' analysis. Returns list of research analyses.
+    """
+    from research.news_fetcher import build_research_context
+    from research.research_agents import RESEARCH_AGENT_PERSONALITIES
+
+    ticker = stock["ticker"]
+    scan_id = stock.get("scan_id")
+    company_name = stock.get("company_name", ticker)
+
+    console.print(f"\n[bold blue]Running {len(RESEARCH_AGENT_PERSONALITIES)} research agents on {ticker}...[/bold blue]")
+
+    # Build contexts
+    stock_context = build_stock_context(stock)
+    research_context = build_research_context(ticker, company_name)
+    existing_verdicts = _build_existing_verdicts_summary(base_analyses)
+
+    # Ensure health check done and redistribute
+    healthy = run_health_check()
+    if healthy:
+        for idx, agent in enumerate(RESEARCH_AGENT_PERSONALITIES):
+            agent["prefer_provider"] = healthy[idx % len(healthy)]
+
+    analyses = []
+    success_count = 0
+    error_count = 0
+
+    for i, agent in enumerate(RESEARCH_AGENT_PERSONALITIES):
+        agent_num = i + 1
+        total = len(RESEARCH_AGENT_PERSONALITIES)
+
+        prompt = RESEARCH_PROMPT_TEMPLATE.format(
+            stock_context=stock_context,
+            research_context=research_context,
+            existing_verdicts=existing_verdicts,
+            agent_name=agent["name"],
+        )
+
+        try:
+            raw_response = llm_pool.call_llm(
+                prompt=prompt,
+                system_instruction=agent["system_prompt"],
+                prefer=agent.get("prefer_provider", "groq"),
+            )
+            analysis = parse_agent_response(raw_response)
+            analysis["agent_name"] = agent["name"]
+            analysis["agent_role"] = agent["role"]
+            analyses.append(analysis)
+
+            if scan_id:
+                save_agent_analysis(
+                    scan_id=scan_id,
+                    ticker=ticker,
+                    agent_name=analysis["agent_name"],
+                    agent_role=analysis["agent_role"],
+                    analysis=analysis,
+                )
+
+            verdict = analysis.get("verdict", "?")
+            conf = analysis.get("confidence", 0)
+            if verdict == "ERROR":
+                error_count += 1
+                console.print(f"  [R{agent_num}/{total}] [red]{analysis['agent_name']:40s} → ERROR[/red]")
+            else:
+                success_count += 1
+                console.print(
+                    f"  [R{agent_num}/{total}] [dim]{analysis['agent_name']:40s}[/dim] → "
+                    f"[{'green' if 'BUY' in verdict else 'red' if 'SELL' in verdict else 'yellow'}]"
+                    f"{verdict:12s}[/] (conf: {conf:.0%})"
+                )
+
+        except Exception as e:
+            error_count += 1
+            console.print(f"  [R{agent_num}/{total}] [red]{agent['name']}: Failed - {e}[/red]")
+
+        if agent_num < total:
+            time.sleep(INTER_AGENT_DELAY)
+
+    console.print(f"\n  [bold]Research agents: {success_count} succeeded, {error_count} errors[/bold]")
+    return analyses
+
+
+def run_research_on_all_stocks(stocks: list, all_base_analyses: dict) -> dict:
+    """Run research agents on all stocks. Returns {ticker: [research_analyses]}."""
+    all_research = {}
+
+    for i, stock in enumerate(stocks, 1):
+        ticker = stock["ticker"]
+        base = all_base_analyses.get(ticker, [])
+        console.print(f"\n[bold blue]═══ Research {i}/{len(stocks)}: {ticker} ═══[/bold blue]")
+        research = run_research_agents_on_stock(stock, base)
+        all_research[ticker] = research
+
+        if i < len(stocks):
+            time.sleep(2)
+
+    return all_research

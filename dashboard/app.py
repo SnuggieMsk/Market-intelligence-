@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.database import (
     init_db, get_latest_scan_results, get_latest_reports,
     get_report_for_ticker, get_all_analyses_for_ticker,
-    get_agent_analyses_for_scan
+    get_agent_analyses_for_scan, get_quant_predictions_for_ticker,
+    get_research_analyses_for_ticker,
 )
 
 # ── Page Config ───────────────────────────────────────────────────────────────
@@ -45,7 +46,8 @@ st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Overview", "Stock Deep Dive", "Agent Reports", "Agent Consensus", "Scan History"],
+    ["Overview", "Stock Deep Dive", "Agent Reports", "Research Reports",
+     "Quant Predictions", "Agent Consensus", "Scan History"],
 )
 
 st.sidebar.markdown("---")
@@ -599,6 +601,384 @@ elif page == "Agent Reports":
         if report.get("recommendation"):
             st.markdown("---")
             st.success(f"**FINAL RECOMMENDATION:** {report['recommendation']}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: RESEARCH REPORTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif page == "Research Reports":
+    st.title("Research & News Cross-Reference")
+    st.markdown("*8 research agents verify whether company narratives match reality*")
+
+    reports = get_latest_reports(limit=20)
+    tickers = [r["ticker"] for r in reports]
+
+    if not tickers:
+        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.stop()
+
+    selected = st.selectbox("Select Stock", tickers, key="research_stock")
+    research = get_research_analyses_for_ticker(selected)
+
+    if not research:
+        st.info(f"No research agent data for {selected}. Run the full pipeline to generate research reports.")
+        st.stop()
+
+    report = get_report_for_ticker(selected)
+    company_name = report.get("company_name", selected) if report else selected
+    st.markdown(f"### {company_name} ({selected})")
+
+    # Summary metrics
+    total = len(research)
+    buy_r = sum(1 for a in research if "BUY" in a.get("verdict", ""))
+    sell_r = sum(1 for a in research if "SELL" in a.get("verdict", ""))
+    avg_score_r = sum(a.get("score", 5) for a in research) / max(total, 1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Research Agents", total)
+    c2.metric("Bullish", buy_r)
+    c3.metric("Bearish", sell_r)
+    c4.metric("Avg Score", f"{avg_score_r:.1f}/10")
+
+    st.markdown("---")
+
+    # Compare research vs base agents
+    all_analyses = get_all_analyses_for_ticker(selected)
+    research_roles = {
+        "news_reality_check", "earnings_analyst", "annual_report_forensic",
+        "research_cross_check", "management_credibility", "competitive_intel",
+        "macro_news_correlator", "narrative_vs_numbers",
+    }
+    base_analyses = [a for a in all_analyses if a.get("agent_role") not in research_roles]
+
+    if base_analyses:
+        base_avg = sum(a.get("score", 5) for a in base_analyses) / max(len(base_analyses), 1)
+        delta = avg_score_r - base_avg
+
+        st.subheader("Research vs Base Agent Comparison")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Base Agents Avg Score", f"{base_avg:.1f}/10")
+        col2.metric("Research Agents Avg Score", f"{avg_score_r:.1f}/10")
+        col3.metric("Delta", f"{delta:+.1f}", delta_color="normal")
+
+        if abs(delta) > 1.5:
+            if delta > 0:
+                st.success("Research agents are MORE bullish than base agents — news/earnings data supports the thesis")
+            else:
+                st.error("Research agents are MORE bearish than base agents — news/earnings data raises concerns")
+        st.markdown("---")
+
+    # Individual research agent cards
+    st.subheader("Detailed Research Agent Reports")
+    for a in research:
+        verdict = a.get("verdict", "?")
+        agent_name = a.get("agent_name", "Unknown")
+        score = a.get("score", 0)
+        confidence = a.get("confidence", 0)
+
+        with st.expander(
+            f"{verdict_emoji(verdict)} **{agent_name}** | {verdict} | Score: {score}/10",
+            expanded=True,
+        ):
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Verdict", verdict)
+            mc2.metric("Score", f"{score}/10")
+            mc3.metric("Confidence", f"{confidence:.0%}")
+
+            st.markdown(f"**Analysis:** {a.get('reasoning', 'N/A')}")
+
+            # Research-specific fields
+            raw = a.get("raw_response", "{}")
+            if isinstance(raw, str):
+                try:
+                    raw_data = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    raw_data = {}
+            else:
+                raw_data = raw if isinstance(raw, dict) else {}
+
+            reality_check = raw_data.get("reality_check", "")
+            narrative_gap = raw_data.get("narrative_gap", "")
+
+            if reality_check:
+                st.info(f"**Reality Check:** {reality_check}")
+            if narrative_gap:
+                st.warning(f"**Narrative Gap:** {narrative_gap}")
+
+            if a.get("key_points"):
+                points = json.loads(a["key_points"]) if isinstance(a["key_points"], str) else a["key_points"]
+                if points:
+                    st.markdown("**Key Findings:**")
+                    for p in points:
+                        st.markdown(f"- {p}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: QUANT PREDICTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif page == "Quant Predictions":
+    st.title("Quantitative Prediction Engine")
+    st.markdown("*Pure math models — fair value, support/resistance, Monte Carlo simulations*")
+
+    reports = get_latest_reports(limit=20)
+    tickers = [r["ticker"] for r in reports]
+
+    if not tickers:
+        st.warning("No stocks analyzed yet. Run the scanner first.")
+        st.stop()
+
+    selected = st.selectbox("Select Stock", tickers, key="quant_stock")
+    quant = get_quant_predictions_for_ticker(selected)
+
+    if not quant:
+        st.info(f"No quant predictions for {selected}. Run: `python main.py` or `python main.py --quant-only`")
+        st.stop()
+
+    report = get_report_for_ticker(selected)
+    company_name = report.get("company_name", selected) if report else selected
+    st.markdown(f"### {company_name} ({selected})")
+
+    valuations = quant.get("valuations_json", {})
+    levels = quant.get("levels_json", {})
+    predictions = quant.get("predictions_json", {})
+    summary = quant.get("summary_json", {})
+
+    # ── Summary Row ──
+    current_price = summary.get("current_price") or valuations.get("current_price", 0)
+    fair_value = valuations.get("composite_fair_value")
+    upside = valuations.get("composite_upside")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Current Price", f"₹{current_price:.2f}" if current_price else "N/A")
+    c2.metric("Fair Value (Composite)", f"₹{fair_value:.2f}" if fair_value else "N/A")
+    c3.metric("Upside/Downside", f"{upside:+.1f}%" if upside is not None else "N/A",
+              delta_color="normal")
+    mc = predictions.get("monte_carlo", {})
+    c4.metric("P(Up in 30d)", f"{mc.get('prob_positive', 'N/A')}%"
+              if mc.get("prob_positive") is not None else "N/A")
+
+    st.markdown("---")
+
+    # ── Valuation Models ──
+    st.subheader("Fair Value Estimates")
+
+    val_tab1, val_tab2, val_tab3 = st.tabs(["Gauge Charts", "Comparison Table", "Model Details"])
+
+    with val_tab1:
+        gcol1, gcol2, gcol3 = st.columns(3)
+        for col, (name, key) in zip(
+            [gcol1, gcol2, gcol3],
+            [("Graham Number", "graham_number"), ("DCF Value", "dcf_value"), ("PEG Value", "peg_value")]
+        ):
+            val = valuations.get(key)
+            with col:
+                if val:
+                    fig = go.Figure(go.Indicator(
+                        mode="gauge+number+delta",
+                        value=current_price,
+                        delta={"reference": val, "relative": True, "valueformat": ".1%"},
+                        title={"text": name},
+                        gauge={
+                            "axis": {"range": [min(current_price, val) * 0.5, max(current_price, val) * 1.5]},
+                            "bar": {"color": "#444"},
+                            "steps": [
+                                {"range": [0, val * 0.8], "color": "#00ff88"},
+                                {"range": [val * 0.8, val * 1.2], "color": "#ffaa00"},
+                                {"range": [val * 1.2, max(current_price, val) * 1.5], "color": "#ff3333"},
+                            ],
+                            "threshold": {
+                                "line": {"color": "blue", "width": 3},
+                                "thickness": 0.75,
+                                "value": val,
+                            },
+                        },
+                    ))
+                    fig.update_layout(height=250, margin=dict(t=40, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.caption(f"{name}: Insufficient data")
+
+    with val_tab2:
+        rows = []
+        for name, key, upside_key in [
+            ("Graham Number", "graham_number", "upside_graham"),
+            ("DCF (Discounted Cash Flow)", "dcf_value", "upside_dcf"),
+            ("PEG Ratio Fair Value", "peg_value", "upside_peg"),
+            ("Composite Average", "composite_fair_value", "composite_upside"),
+        ]:
+            val = valuations.get(key)
+            up = valuations.get(upside_key)
+            rows.append({
+                "Model": name,
+                "Fair Value": f"₹{val:.2f}" if val else "N/A",
+                "Current Price": f"₹{current_price:.2f}",
+                "Upside": f"{up:+.1f}%" if up is not None else "N/A",
+                "Signal": "UNDERVALUED" if up and up > 10 else "OVERVALUED" if up and up < -10 else "FAIR",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with val_tab3:
+        st.markdown("""
+        **Graham Number**: `sqrt(22.5 * EPS * Book Value)` — Benjamin Graham's intrinsic value formula
+        **DCF**: Discounted Cash Flow — projects free cash flow 5 years forward, discounts at 10%
+        **PEG**: Price/Earnings-to-Growth — fair P/E = earnings growth rate (when PEG = 1.0)
+        """)
+
+    st.markdown("---")
+
+    # ── Support/Resistance Levels ──
+    st.subheader("Support & Resistance Levels")
+
+    fib = levels.get("fibonacci", {})
+    pivots = levels.get("pivot_points", {})
+    mas = levels.get("moving_averages", {})
+
+    # Price chart with levels
+    all_levels = []
+    if fib:
+        for name, val in fib.items():
+            if name.startswith("fib_") and val:
+                all_levels.append({"Level": f"Fib {name.replace('fib_', '')}", "Price": val, "Type": "Fibonacci"})
+    if pivots:
+        for name, val in pivots.items():
+            if val:
+                all_levels.append({"Level": name.upper(), "Price": val, "Type": "Pivot"})
+    if mas:
+        for name, val in mas.items():
+            if val:
+                all_levels.append({"Level": name.upper(), "Price": val, "Type": "Moving Avg"})
+
+    if all_levels:
+        levels_df = pd.DataFrame(all_levels).sort_values("Price", ascending=False)
+
+        fig = go.Figure()
+        colors = {"Fibonacci": "#9966ff", "Pivot": "#ff6600", "Moving Avg": "#0099ff"}
+        for _, row in levels_df.iterrows():
+            fig.add_hline(
+                y=row["Price"], line_dash="dash",
+                line_color=colors.get(row["Type"], "#888"),
+                annotation_text=f"{row['Level']}: ₹{row['Price']:.2f}",
+                annotation_position="right",
+            )
+
+        fig.add_hline(y=current_price, line_color="white", line_width=3,
+                      annotation_text=f"Current: ₹{current_price:.2f}")
+        fig.update_layout(
+            title="Price Levels Map",
+            yaxis_title="Price (₹)",
+            height=500,
+            yaxis=dict(range=[min(l["Price"] for l in all_levels) * 0.95,
+                              max(l["Price"] for l in all_levels) * 1.05]),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Table view
+        st.dataframe(levels_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # ── Monte Carlo Simulation ──
+    st.subheader("Monte Carlo Price Simulation (30-day)")
+
+    mc = predictions.get("monte_carlo", {})
+    if mc and not mc.get("error"):
+        mc_col1, mc_col2, mc_col3, mc_col4 = st.columns(4)
+        mc_col1.metric("Median Price (30d)", f"₹{mc.get('median_price', 0):.2f}")
+        mc_col2.metric("Expected Return", f"{mc.get('expected_return', 0):+.2f}%")
+        mc_col3.metric("P(Positive)", f"{mc.get('prob_positive', 0):.0f}%")
+        mc_col4.metric("Ann. Volatility", f"{mc.get('annualized_volatility', 0):.1f}%")
+
+        # Distribution chart
+        percentiles = [
+            ("P10 (Bearish)", mc.get("p10", 0)),
+            ("P25", mc.get("p25", 0)),
+            ("Median", mc.get("median_price", 0)),
+            ("P75", mc.get("p75", 0)),
+            ("P90 (Bullish)", mc.get("p90", 0)),
+        ]
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=[p[0] for p in percentiles],
+            y=[p[1] for p in percentiles],
+            marker_color=["#ff3333", "#ffaa00", "#ffffff", "#88cc88", "#00ff88"],
+            text=[f"₹{p[1]:.2f}" for p in percentiles],
+            textposition="outside",
+        ))
+        fig.add_hline(y=current_price, line_dash="dash", line_color="cyan",
+                      annotation_text=f"Current: ₹{current_price:.2f}")
+        fig.update_layout(title="30-Day Price Distribution", yaxis_title="Price (₹)", height=400)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Probabilities
+        st.markdown("**Probability Analysis:**")
+        p_col1, p_col2, p_col3 = st.columns(3)
+        p_col1.metric("P(Up >10%)", f"{mc.get('prob_up_10pct', 0):.0f}%")
+        p_col2.metric("P(Down >10%)", f"{mc.get('prob_down_10pct', 0):.0f}%")
+        p_col3.metric("Daily Volatility", f"{mc.get('daily_volatility', 0):.2f}%")
+    else:
+        st.info("Monte Carlo simulation data not available.")
+
+    st.markdown("---")
+
+    # ── Mean Reversion ──
+    st.subheader("Mean Reversion Analysis")
+
+    mr = predictions.get("mean_reversion", {})
+    if mr and not mr.get("error"):
+        mr_col1, mr_col2, mr_col3, mr_col4 = st.columns(4)
+        mr_col1.metric("Z-Score", f"{mr.get('z_score', 0):.2f}")
+        mr_col2.metric("Target (SMA)", f"₹{mr.get('target_price', 0):.2f}")
+        mr_col3.metric("Deviation", f"{mr.get('deviation_pct', 0):+.1f}%")
+        signal = mr.get("signal", "FAIR")
+        mr_col4.metric("Signal", signal)
+
+        # Z-score gauge
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=mr.get("z_score", 0),
+            title={"text": "Z-Score (distance from mean)"},
+            gauge={
+                "axis": {"range": [-3, 3]},
+                "bar": {"color": "#444"},
+                "steps": [
+                    {"range": [-3, -2], "color": "#00ff88"},   # Oversold
+                    {"range": [-2, -1], "color": "#88cc88"},
+                    {"range": [-1, 1], "color": "#ffaa00"},    # Fair
+                    {"range": [1, 2], "color": "#cc8844"},
+                    {"range": [2, 3], "color": "#ff3333"},     # Overbought
+                ],
+            },
+        ))
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+        if mr.get("half_life_days"):
+            st.markdown(f"**Estimated mean reversion half-life:** {mr['half_life_days']:.0f} days")
+        st.markdown(f"**Bands:** ₹{mr.get('band_lower_2std', 0):.2f} (−2σ) → "
+                    f"₹{mr.get('band_lower_1std', 0):.2f} (−1σ) → "
+                    f"₹{mr.get('target_price', 0):.2f} (mean) → "
+                    f"₹{mr.get('band_upper_1std', 0):.2f} (+1σ) → "
+                    f"₹{mr.get('band_upper_2std', 0):.2f} (+2σ)")
+    else:
+        st.info("Mean reversion data not available.")
+
+    st.markdown("---")
+
+    # ── Bollinger Bands ──
+    st.subheader("Bollinger Band Position")
+
+    bb = predictions.get("bollinger", {})
+    if bb and not bb.get("error"):
+        bb_col1, bb_col2, bb_col3, bb_col4 = st.columns(4)
+        bb_col1.metric("Upper Band", f"₹{bb.get('upper', 0):.2f}")
+        bb_col2.metric("Middle (SMA20)", f"₹{bb.get('middle', 0):.2f}")
+        bb_col3.metric("Lower Band", f"₹{bb.get('lower', 0):.2f}")
+        bb_col4.metric("%B Position", f"{bb.get('percent_b', 50):.0f}%")
+
+        st.markdown(f"**Bandwidth:** {bb.get('bandwidth', 0):.1f}% | **Signal:** {bb.get('signal', 'NEUTRAL')}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

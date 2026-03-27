@@ -56,7 +56,16 @@ Include: verdict, conviction, time horizon, position sizing suggestion, key risk
 
 def build_analyses_summary(analyses: list) -> str:
     """Format all agent analyses into a readable summary for meta-agents."""
-    lines = ["═══ INDIVIDUAL AGENT ANALYSES (32+ Perspectives) ═══\n"]
+    # Separate base agents from research agents
+    research_roles = {
+        "news_reality_check", "earnings_analyst", "annual_report_forensic",
+        "research_cross_check", "management_credibility", "competitive_intel",
+        "macro_news_correlator", "narrative_vs_numbers",
+    }
+    base_analyses = [a for a in analyses if a.get("agent_role") not in research_roles]
+    research_analyses = [a for a in analyses if a.get("agent_role") in research_roles]
+
+    lines = [f"═══ INDIVIDUAL AGENT ANALYSES ({len(base_analyses)} Base + {len(research_analyses)} Research) ═══\n"]
 
     # Group by verdict
     verdicts = {}
@@ -98,6 +107,24 @@ def build_analyses_summary(analyses: list) -> str:
         if catalysts:
             lines.append(f"  Catalysts: {'; '.join(catalysts[:2])}")
         lines.append("")
+
+    # Add research section if present
+    if research_analyses:
+        lines.append("\n═══ RESEARCH & NEWS CROSS-REFERENCE ═══\n")
+        for a in research_analyses:
+            name = a.get("agent_name", "Unknown")
+            verdict = a.get("verdict", "?")
+            reasoning = a.get("reasoning", "")
+            reality_check = a.get("reality_check", "")
+            narrative_gap = a.get("narrative_gap", "")
+            lines.append(f"── {name} ──")
+            lines.append(f"  Verdict: {verdict} | Score: {a.get('score', 5)}/10")
+            lines.append(f"  Analysis: {reasoning}")
+            if reality_check:
+                lines.append(f"  Reality Check: {reality_check}")
+            if narrative_gap:
+                lines.append(f"  Narrative Gap: {narrative_gap}")
+            lines.append("")
 
     return "\n".join(lines)
 

@@ -79,10 +79,25 @@ def init_db():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS quant_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER NOT NULL,
+            ticker TEXT NOT NULL,
+            prediction_timestamp TEXT NOT NULL,
+            valuations_json TEXT,
+            levels_json TEXT,
+            predictions_json TEXT,
+            summary_json TEXT,
+            FOREIGN KEY (scan_id) REFERENCES scan_results(id)
+        )
+    """)
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_scan_ticker ON scan_results(ticker)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_scan_time ON scan_results(scan_timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_agent_scan ON agent_analyses(scan_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_report_scan ON aggregated_reports(scan_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_quant_ticker ON quant_predictions(ticker)")
 
     conn.commit()
     conn.close()
@@ -231,5 +246,67 @@ def get_all_analyses_for_ticker(ticker):
         WHERE aa.ticker = ?
         ORDER BY aa.analysis_timestamp DESC
     """, (ticker,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_quant_predictions(scan_id, ticker, quant_data):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO quant_predictions
+        (scan_id, ticker, prediction_timestamp, valuations_json, levels_json,
+         predictions_json, summary_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        scan_id,
+        ticker,
+        datetime.utcnow().isoformat(),
+        json.dumps(quant_data.get("valuations", {})),
+        json.dumps(quant_data.get("levels", {})),
+        json.dumps(quant_data.get("predictions", {})),
+        json.dumps(quant_data.get("summary", {})),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_quant_predictions_for_ticker(ticker):
+    conn = get_connection()
+    row = conn.execute("""
+        SELECT * FROM quant_predictions
+        WHERE ticker = ?
+        ORDER BY prediction_timestamp DESC
+        LIMIT 1
+    """, (ticker,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    result = dict(row)
+    for key in ["valuations_json", "levels_json", "predictions_json", "summary_json"]:
+        if result.get(key):
+            try:
+                result[key] = json.loads(result[key])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return result
+
+
+def get_research_analyses_for_ticker(ticker):
+    """Get only research agent analyses (not base 36 agents)."""
+    research_roles = [
+        "news_reality_check", "earnings_analyst", "annual_report_forensic",
+        "research_cross_check", "management_credibility", "competitive_intel",
+        "macro_news_correlator", "narrative_vs_numbers",
+    ]
+    conn = get_connection()
+    placeholders = ",".join(["?" for _ in research_roles])
+    rows = conn.execute(f"""
+        SELECT aa.*, sr.scan_timestamp
+        FROM agent_analyses aa
+        JOIN scan_results sr ON aa.scan_id = sr.id
+        WHERE aa.ticker = ? AND aa.agent_role IN ({placeholders})
+        ORDER BY aa.analysis_timestamp DESC
+    """, (ticker, *research_roles)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

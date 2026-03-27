@@ -15,6 +15,9 @@ streamlit>=1.30.0
 plotly>=5.18.0
 streamlit-autorefresh>=1.0.1
 
+# Quantitative Engine
+scipy>=1.10.0
+
 # Utilities
 python-dotenv>=1.0.0
 rich>=13.0.0
