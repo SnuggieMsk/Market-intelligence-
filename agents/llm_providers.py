@@ -5,7 +5,8 @@ Supports: Google Gemini, Groq, OpenRouter.
 Strategy: health-check-first, then only use alive providers.
 - At startup, each provider is tested with 1 tiny call (no retries)
 - Dead providers are BLOCKED — zero wasted calls or backoff time
-- Alive providers get round-robin key rotation + light retry (2 attempts max)
+- On 429: wait 60s (full rate window reset), then retry — not 5s guesses
+- max_tokens=1024 (agent responses are ~400 tokens, saves TPM quota)
 """
 
 import json
@@ -44,9 +45,9 @@ class RateLimiter:
             self.timestamps.append(time.time())
 
     def backoff_after_429(self, attempt: int):
-        """Short backoff: 5s, 10s. We already know the provider is alive."""
-        wait = min(5 * (2 ** attempt), 15)  # 5s, 10s, 15s max
-        print(f"[RateLimit] 429 — backing off {wait}s (attempt {attempt + 1})")
+        """Wait 60s for full rate window reset. Short waits don't help."""
+        wait = 60  # Always 60s — lets the per-minute window fully reset
+        print(f"[RateLimit] 429 — waiting {wait}s for rate window reset (attempt {attempt + 1})")
         time.sleep(wait)
 
 
@@ -57,11 +58,11 @@ class LLMPool:
     Health-check-first strategy:
     1. check_provider_health() tests each provider once at startup
     2. Only alive providers are used — dead ones are skipped instantly
-    3. Max 2 retries per provider (not 5) since we know they're alive
-    4. Short backoff (5s/10s) instead of 10s→120s
+    3. On 429, wait 60s (full rate window reset), then retry
+    4. max_tokens=1024 to conserve tokens-per-minute quota
     """
 
-    MAX_RETRIES = 2  # Light retry — we already know the provider works
+    MAX_RETRIES = 3  # 3 retries × 60s wait = 3 min max, but will succeed
 
     def __init__(self):
         self._gemini_idx = 0
@@ -118,7 +119,7 @@ class LLMPool:
                 from google import genai
 
                 client = genai.Client(api_key=key)
-                config = {"temperature": 0.7, "max_output_tokens": 4096}
+                config = {"temperature": 0.7, "max_output_tokens": 1024}
                 if system_instruction:
                     config["system_instruction"] = system_instruction
 
@@ -162,7 +163,7 @@ class LLMPool:
                     model=GROQ_MODEL,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=4096,
+                    max_tokens=1024,
                 )
                 return response.choices[0].message.content
 

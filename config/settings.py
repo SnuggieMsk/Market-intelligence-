@@ -39,10 +39,10 @@ CUSTOM_WATCHLIST = []  # Add NSE tickers manually, e.g. ["ZOMATO", "PAYTM"]
 # ── Agent Settings ────────────────────────────────────────────────────────────
 MAX_CONCURRENT_AGENTS = 1           # Sequential: 1 at a time to avoid rate limits
 AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
-GEMINI_RPM_PER_KEY = 10             # Conservative: well under 15 RPM limit
-GROQ_RPM_PER_KEY = 20               # Conservative: well under 30 RPM limit
-OPENROUTER_RPM = 10                 # OpenRouter free tier is strict
-INTER_AGENT_DELAY = 2               # Seconds to wait between each agent call
+GEMINI_RPM_PER_KEY = 8               # Conservative: accounts for TPM limits too
+GROQ_RPM_PER_KEY = 10               # Groq free TPM is 6000 — ~5-6 calls/min realistic
+OPENROUTER_RPM = 8                  # OpenRouter free tier is strict
+INTER_AGENT_DELAY = 5               # 5s gap = max 12 calls/min, safe for all providers
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
 GEMINI_MODEL = "gemini-2.0-flash"
