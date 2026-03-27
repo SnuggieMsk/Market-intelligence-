@@ -4,26 +4,17 @@ pandas>=2.0.0
 numpy>=1.24.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
-feedparser>=6.0.0
 
 # AI Providers (Free Tiers)
-google-generativeai>=0.3.0
+google-generativeai>=0.8.0
 groq>=0.4.0
+# OpenRouter uses requests (no extra package)
 
 # Dashboard
 streamlit>=1.30.0
 plotly>=5.18.0
 streamlit-autorefresh>=1.0.1
 
-# Database
-# sqlite3 is built-in
-
-# Scheduling
-schedule>=1.2.0
-apscheduler>=3.10.0
-
 # Utilities
 python-dotenv>=1.0.0
 rich>=13.0.0
-tenacity>=8.2.0
-aiohttp>=3.9.0

@@ -154,9 +154,9 @@ def scan_market() -> list:
     for i, stock in enumerate(top, 1):
         reasons = ", ".join(stock["standout_reasons"][:3]) if stock["standout_reasons"] else "Composite score"
         console.print(
-            f"  {i:2d}. [bold]{stock['ticker']:6s}[/bold] "
+            f"  {i:2d}. [bold]{stock['ticker']:15s}[/bold] "
             f"Score: {stock['composite_score']:.1f} | "
-            f"${stock['current_price']:.2f} | "
+            f"₹{stock['current_price']:.2f} | "
             f"{stock['company_name']} | "
             f"[dim]{reasons}[/dim]"
         )

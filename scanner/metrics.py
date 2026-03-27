@@ -39,7 +39,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         low_52w = close.min()
         metrics["price_vs_52w_low"] = ((latest_close - low_52w) / low_52w) * 100
         if metrics["price_vs_52w_low"] < 10:
-            reasons.append(f"Trading within 10% of 52-week low (${low_52w:.2f})")
+            reasons.append(f"Trading within 10% of 52-week low (₹{low_52w:.2f})")
 
         # 2. Price vs 52-week high (how far from top)
         high_52w = close.max()

@@ -1,50 +1,81 @@
 """
 LLM provider abstraction layer.
-Round-robins across multiple API keys to maximize free tier throughput.
-Supports Google Gemini and Groq.
+Supports: Google Gemini, Groq, OpenRouter.
+Round-robins across multiple API keys with proper 429 rate limit handling.
+429 errors trigger exponential backoff WITHOUT consuming quota.
 """
 
 import json
 import time
 import threading
+import requests
 from config.settings import (
-    GEMINI_API_KEYS, GROQ_API_KEYS, GEMINI_MODEL, GROQ_MODEL,
-    GEMINI_RPM_LIMIT, GROQ_RPM_LIMIT
+    GEMINI_API_KEYS, GROQ_API_KEYS, OPENROUTER_API_KEY,
+    GEMINI_MODEL, GROQ_MODEL, OPENROUTER_MODEL,
+    GEMINI_RPM_PER_KEY, GROQ_RPM_PER_KEY, OPENROUTER_RPM,
 )
 
 
 class RateLimiter:
-    """Simple token-bucket rate limiter per key."""
+    """
+    Pre-emptive rate limiter that throttles BEFORE making calls.
+    Keeps a sliding window of timestamps and sleeps if at capacity.
+    """
 
-    def __init__(self, rpm_limit):
+    def __init__(self, rpm_limit: int):
         self.rpm_limit = rpm_limit
-        self.timestamps = []
+        self.timestamps: list[float] = []
         self.lock = threading.Lock()
 
-    def wait_if_needed(self):
+    def acquire(self):
+        """Wait until we're safely under the rate limit, then record the call."""
         with self.lock:
             now = time.time()
+            # Purge timestamps older than 60s
             self.timestamps = [t for t in self.timestamps if now - t < 60]
+
             if len(self.timestamps) >= self.rpm_limit:
-                sleep_time = 60 - (now - self.timestamps[0]) + 0.5
-                time.sleep(max(0, sleep_time))
+                # Wait until the oldest call falls out of the window
+                sleep_time = 60 - (now - self.timestamps[0]) + 1.0
+                if sleep_time > 0:
+                    print(f"[RateLimit] Throttling for {sleep_time:.1f}s (at {self.rpm_limit} RPM limit)")
+                    time.sleep(sleep_time)
+
             self.timestamps.append(time.time())
+
+    def backoff_after_429(self, attempt: int):
+        """
+        Called when a 429 is received. Does NOT count as a used request.
+        Exponential backoff: 4s, 8s, 16s, 32s.
+        """
+        wait = min(4 * (2 ** attempt), 60)
+        print(f"[RateLimit] 429 received — backing off {wait}s (attempt {attempt + 1})")
+        time.sleep(wait)
 
 
 class LLMPool:
     """
-    Manages multiple API keys and distributes calls across providers.
-    Automatically falls back between Gemini and Groq.
+    Manages multiple API keys across Gemini, Groq, and OpenRouter.
+    Features:
+    - Round-robin key rotation
+    - Pre-emptive rate limiting (never hits 429 under normal conditions)
+    - 429 exponential backoff with retry (no quota wasted)
+    - Automatic fallback chain: preferred → next → next
     """
+
+    MAX_RETRIES = 3
 
     def __init__(self):
         self._gemini_idx = 0
         self._groq_idx = 0
-        self._gemini_limiters = {k: RateLimiter(GEMINI_RPM_LIMIT) for k in GEMINI_API_KEYS}
-        self._groq_limiters = {k: RateLimiter(GROQ_RPM_LIMIT) for k in GROQ_API_KEYS}
         self._lock = threading.Lock()
 
-    def _next_gemini_key(self):
+        # Per-key rate limiters
+        self._gemini_limiters = {k: RateLimiter(GEMINI_RPM_PER_KEY) for k in GEMINI_API_KEYS}
+        self._groq_limiters = {k: RateLimiter(GROQ_RPM_PER_KEY) for k in GROQ_API_KEYS}
+        self._openrouter_limiter = RateLimiter(OPENROUTER_RPM)
+
+    def _next_gemini_key(self) -> str | None:
         with self._lock:
             if not GEMINI_API_KEYS:
                 return None
@@ -52,7 +83,7 @@ class LLMPool:
             self._gemini_idx += 1
             return key
 
-    def _next_groq_key(self):
+    def _next_groq_key(self) -> str | None:
         with self._lock:
             if not GROQ_API_KEYS:
                 return None
@@ -60,64 +91,160 @@ class LLMPool:
             self._groq_idx += 1
             return key
 
+    # ── Gemini ────────────────────────────────────────────────────────────────
+
     def call_gemini(self, prompt: str, system_instruction: str = "") -> str:
-        key = self._next_gemini_key()
-        if not key:
-            raise RuntimeError("No Gemini API keys configured")
+        """Call Gemini with rate limiting and 429 retry."""
+        for attempt in range(self.MAX_RETRIES):
+            key = self._next_gemini_key()
+            if not key:
+                raise RuntimeError("No Gemini API keys configured")
 
-        self._gemini_limiters[key].wait_if_needed()
+            limiter = self._gemini_limiters[key]
+            limiter.acquire()
 
-        import google.generativeai as genai
-        genai.configure(api_key=key)
-        model = genai.GenerativeModel(
-            GEMINI_MODEL,
-            system_instruction=system_instruction if system_instruction else None,
-        )
-        response = model.generate_content(prompt)
-        return response.text
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel(
+                    GEMINI_MODEL,
+                    system_instruction=system_instruction or None,
+                )
+                response = model.generate_content(prompt)
+                return response.text
+
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "resource_exhausted" in err_str or "rate" in err_str:
+                    limiter.backoff_after_429(attempt)
+                    continue  # Retry with next key
+                raise  # Non-rate-limit error, bubble up
+
+        raise RuntimeError(f"Gemini: exhausted {self.MAX_RETRIES} retries due to rate limits")
+
+    # ── Groq ──────────────────────────────────────────────────────────────────
 
     def call_groq(self, prompt: str, system_instruction: str = "") -> str:
-        key = self._next_groq_key()
-        if not key:
-            raise RuntimeError("No Groq API keys configured")
+        """Call Groq with rate limiting and 429 retry."""
+        for attempt in range(self.MAX_RETRIES):
+            key = self._next_groq_key()
+            if not key:
+                raise RuntimeError("No Groq API keys configured")
 
-        self._groq_limiters[key].wait_if_needed()
+            limiter = self._groq_limiters[key]
+            limiter.acquire()
 
-        from groq import Groq
-        client = Groq(api_key=key)
+            try:
+                from groq import Groq
+                client = Groq(api_key=key)
 
-        messages = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
 
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=4096,
-        )
-        return response.choices[0].message.content
+                response = client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=4096,
+                )
+                return response.choices[0].message.content
+
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "rate_limit" in err_str or "rate limit" in err_str:
+                    limiter.backoff_after_429(attempt)
+                    continue
+                raise
+
+        raise RuntimeError(f"Groq: exhausted {self.MAX_RETRIES} retries due to rate limits")
+
+    # ── OpenRouter ────────────────────────────────────────────────────────────
+
+    def call_openrouter(self, prompt: str, system_instruction: str = "") -> str:
+        """Call OpenRouter (free models) with rate limiting and 429 retry."""
+        if not OPENROUTER_API_KEY:
+            raise RuntimeError("No OpenRouter API key configured")
+
+        for attempt in range(self.MAX_RETRIES):
+            self._openrouter_limiter.acquire()
+
+            try:
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
+
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "http://localhost:8501",
+                        "X-Title": "Market Intelligence",
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": messages,
+                        "temperature": 0.7,
+                        "max_tokens": 4096,
+                    },
+                    timeout=120,
+                )
+
+                if resp.status_code == 429:
+                    self._openrouter_limiter.backoff_after_429(attempt)
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+
+            except requests.exceptions.HTTPError as e:
+                if "429" in str(e):
+                    self._openrouter_limiter.backoff_after_429(attempt)
+                    continue
+                raise
+            except Exception as e:
+                if "429" in str(e):
+                    self._openrouter_limiter.backoff_after_429(attempt)
+                    continue
+                raise
+
+        raise RuntimeError(f"OpenRouter: exhausted {self.MAX_RETRIES} retries due to rate limits")
+
+    # ── Unified Call with Fallback Chain ──────────────────────────────────────
 
     def call_llm(self, prompt: str, system_instruction: str = "",
                  prefer: str = "gemini") -> str:
         """
-        Call LLM with automatic fallback.
-        prefer: 'gemini' or 'groq'
+        Call LLM with automatic fallback chain.
+        Order: preferred provider → remaining providers.
+        All 429 errors are handled with backoff BEFORE falling back.
         """
-        providers = (
-            [("gemini", self.call_gemini), ("groq", self.call_groq)]
-            if prefer == "gemini"
-            else [("groq", self.call_groq), ("gemini", self.call_gemini)]
-        )
+        all_providers = {
+            "gemini": self.call_gemini,
+            "groq": self.call_groq,
+            "openrouter": self.call_openrouter,
+        }
+
+        # Build ordered fallback chain
+        order = [prefer]
+        for p in ["gemini", "groq", "openrouter"]:
+            if p not in order:
+                order.append(p)
 
         last_error = None
-        for name, fn in providers:
+        for provider_name in order:
+            fn = all_providers.get(provider_name)
+            if not fn:
+                continue
             try:
                 return fn(prompt, system_instruction)
             except Exception as e:
                 last_error = e
-                print(f"[LLM] {name} failed: {e}, trying next...")
+                print(f"[LLM] {provider_name} failed: {e}, trying next provider...")
                 continue
 
         raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")

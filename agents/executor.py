@@ -28,8 +28,9 @@ def build_stock_context(stock: dict) -> str:
 Company: {stock.get('company_name', stock['ticker'])}
 Ticker: {stock['ticker']}
 Sector: {stock.get('sector', 'Unknown')} | Industry: {stock.get('industry', 'Unknown')}
-Current Price: ${stock.get('current_price', 0):.2f}
-Market Cap: ${stock.get('market_cap', 0):,.0f}
+Current Price: ₹{stock.get('current_price', 0):.2f}
+Market Cap: ₹{stock.get('market_cap', 0):,.0f}
+Exchange: NSE (National Stock Exchange of India)
 
 ═══ WHY THIS STOCK STANDS OUT ═══
 {chr(10).join(f'• {r}' for r in reasons) if reasons else '• High composite score across multiple metrics'}

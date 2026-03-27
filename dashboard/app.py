@@ -82,13 +82,13 @@ def verdict_emoji(verdict: str) -> str:
 def format_market_cap(mc):
     if not mc:
         return "N/A"
-    if mc >= 1e12:
-        return f"${mc/1e12:.1f}T"
-    if mc >= 1e9:
-        return f"${mc/1e9:.1f}B"
-    if mc >= 1e6:
-        return f"${mc/1e6:.0f}M"
-    return f"${mc:,.0f}"
+    # Indian notation: Cr (crore) and L Cr (lakh crore)
+    cr = mc / 1e7  # 1 crore = 10 million
+    if cr >= 1e5:
+        return f"₹{cr/1e5:.1f}L Cr"
+    if cr >= 1:
+        return f"₹{cr:,.0f} Cr"
+    return f"₹{mc:,.0f}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -140,12 +140,12 @@ if page == "Overview":
 
         with st.expander(
             f"{verdict_emoji(verdict)} **{ticker}** — {company} | "
-            f"Score: {score}/10 | {verdict} | ${price:.2f}"
+            f"Score: {score}/10 | {verdict} | ₹{price:.2f}"
         ):
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Verdict", verdict)
             c2.metric("Score", f"{score}/10")
-            c3.metric("Price", f"${price:.2f}")
+            c3.metric("Price", f"₹{price:.2f}")
             c4.metric("Market Cap", format_market_cap(mcap))
 
             if report.get("consensus_summary"):
@@ -204,7 +204,7 @@ elif page == "Stock Deep Dive":
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Verdict", verdict)
     c2.metric("Score", f"{report.get('overall_score', 0)}/10")
-    c3.metric("Price", f"${report.get('current_price', 0):.2f}")
+    c3.metric("Price", f"₹{report.get('current_price', 0):.2f}")
     c4.metric("Market Cap", format_market_cap(report.get("market_cap")))
     c5.metric("Sector", report.get("sector", "N/A"))
 

@@ -1,6 +1,6 @@
 """
 Central configuration for Market Intelligence System.
-All settings, API keys, and constants live here.
+Focused on Indian Market (NSE/BSE).
 """
 
 import os
@@ -9,46 +9,53 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
-# Add your keys to a .env file in the project root
 GEMINI_API_KEYS = [
     k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(",") if k.strip()
 ]
 GROQ_API_KEYS = [
     k.strip() for k in os.getenv("GROQ_API_KEYS", "").split(",") if k.strip()
 ]
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+
+# ── Market ────────────────────────────────────────────────────────────────────
+MARKET = "INDIA"                    # INDIA or US
+CURRENCY_SYMBOL = "₹"
+EXCHANGE_SUFFIX = ".NS"             # .NS for NSE, .BO for BSE
 
 # ── Scanner Settings ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MINUTES = 30          # How often to run the full scan
 TOP_STOCKS_TO_ANALYZE = 15          # How many standout stocks to send to agents
-MIN_MARKET_CAP = 1_000_000_000     # $1B minimum market cap (filter penny stocks)
-MIN_VOLUME = 500_000                # Minimum daily volume
+MIN_MARKET_CAP = 5_000_000_000     # ₹500 Cr minimum (~₹5B)
+MIN_VOLUME = 200_000               # Minimum daily volume
 
-# Universe: S&P 500 + NASDAQ 100 + additional watchlist
+# Universe: Nifty 50 + Sensex 30 + Nifty Next 50 + custom
 STOCK_UNIVERSE_SOURCES = [
-    "sp500",
-    "nasdaq100",
+    "nifty50",
+    "sensex30",
+    "nifty_next50",
 ]
-CUSTOM_WATCHLIST = []  # Add tickers manually, e.g. ["TSLA", "NVDA"]
+CUSTOM_WATCHLIST = []  # Add NSE tickers manually, e.g. ["ZOMATO", "PAYTM"]
 
 # ── Agent Settings ────────────────────────────────────────────────────────────
-MAX_CONCURRENT_AGENTS = 5           # Parallel agent calls (respect rate limits)
+MAX_CONCURRENT_AGENTS = 4           # Parallel agent calls (respect rate limits)
 AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
-GEMINI_RPM_LIMIT = 15               # Requests per minute per key
-GROQ_RPM_LIMIT = 30                 # Requests per minute per key
+GEMINI_RPM_PER_KEY = 14             # Stay under 15 RPM limit per key (safety margin)
+GROQ_RPM_PER_KEY = 28               # Stay under 30 RPM limit per key
+OPENROUTER_RPM = 20                 # OpenRouter free tier
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-2.0-flash"        # Free tier model
-GROQ_MODEL = "llama-3.3-70b-versatile"   # Free tier model
+GEMINI_MODEL = "gemini-2.0-flash"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 # ── Database ──────────────────────────────────────────────────────────────────
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "market_intel.db")
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = 8501
-DASHBOARD_REFRESH_SECONDS = 300     # Auto-refresh every 5 minutes
+DASHBOARD_REFRESH_SECONDS = 300
 
 # ── Scoring Weights for Scanner Metrics ───────────────────────────────────────
-# Higher weight = more important for identifying standout stocks
 METRIC_WEIGHTS = {
     # Price Action (8 metrics)
     "price_vs_52w_low": 3.0,
