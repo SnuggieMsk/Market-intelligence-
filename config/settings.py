@@ -24,7 +24,7 @@ EXCHANGE_SUFFIX = ".NS"             # .NS for NSE, .BO for BSE
 
 # ── Scanner Settings ──────────────────────────────────────────────────────────
 SCAN_INTERVAL_MINUTES = 30          # How often to run the full scan
-TOP_STOCKS_TO_ANALYZE = 15          # How many standout stocks to send to agents
+TOP_STOCKS_TO_ANALYZE = 5           # Start small: 5 stocks x 36 agents = 180 calls
 MIN_MARKET_CAP = 5_000_000_000     # ₹500 Cr minimum (~₹5B)
 MIN_VOLUME = 200_000               # Minimum daily volume
 
@@ -37,11 +37,12 @@ STOCK_UNIVERSE_SOURCES = [
 CUSTOM_WATCHLIST = []  # Add NSE tickers manually, e.g. ["ZOMATO", "PAYTM"]
 
 # ── Agent Settings ────────────────────────────────────────────────────────────
-MAX_CONCURRENT_AGENTS = 4           # Parallel agent calls (respect rate limits)
+MAX_CONCURRENT_AGENTS = 1           # Sequential: 1 at a time to avoid rate limits
 AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
-GEMINI_RPM_PER_KEY = 14             # Stay under 15 RPM limit per key (safety margin)
-GROQ_RPM_PER_KEY = 28               # Stay under 30 RPM limit per key
-OPENROUTER_RPM = 20                 # OpenRouter free tier
+GEMINI_RPM_PER_KEY = 10             # Conservative: well under 15 RPM limit
+GROQ_RPM_PER_KEY = 20               # Conservative: well under 30 RPM limit
+OPENROUTER_RPM = 10                 # OpenRouter free tier is strict
+INTER_AGENT_DELAY = 3               # Seconds to wait between each agent call
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
 GEMINI_MODEL = "gemini-2.0-flash"

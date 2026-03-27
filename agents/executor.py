@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
-from config.settings import MAX_CONCURRENT_AGENTS, AGENT_TIMEOUT_SECONDS
+from config.settings import MAX_CONCURRENT_AGENTS, AGENT_TIMEOUT_SECONDS, INTER_AGENT_DELAY
 from agents.personalities import AGENT_PERSONALITIES
 from agents.llm_providers import llm_pool, parse_agent_response
 from data.database import save_agent_analysis
@@ -143,8 +143,9 @@ def run_single_agent(agent: dict, stock: dict) -> dict:
 
 def run_all_agents_on_stock(stock: dict) -> list:
     """
-    Run all 32+ agents against a single stock.
-    Returns list of all agent analyses.
+    Run all 36 agents against a single stock.
+    Runs sequentially with delays to respect free tier rate limits.
+    Alternates between providers to spread the load.
     """
     ticker = stock["ticker"]
     scan_id = stock.get("scan_id")
@@ -152,49 +153,55 @@ def run_all_agents_on_stock(stock: dict) -> list:
     console.print(f"\n[bold magenta]Running {len(AGENT_PERSONALITIES)} agents on {ticker}...[/bold magenta]")
 
     analyses = []
+    success_count = 0
+    error_count = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-    ) as progress:
-        task = progress.add_task(f"Agents analyzing {ticker}", total=len(AGENT_PERSONALITIES))
+    for i, agent in enumerate(AGENT_PERSONALITIES):
+        agent_num = i + 1
+        total = len(AGENT_PERSONALITIES)
 
-        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_AGENTS) as executor:
-            futures = {
-                executor.submit(run_single_agent, agent, stock): agent
-                for agent in AGENT_PERSONALITIES
-            }
+        try:
+            analysis = run_single_agent(agent, stock)
+            analyses.append(analysis)
 
-            for future in as_completed(futures):
-                agent = futures[future]
-                try:
-                    analysis = future.result(timeout=AGENT_TIMEOUT_SECONDS)
-                    analyses.append(analysis)
+            # Save to DB
+            if scan_id:
+                save_agent_analysis(
+                    scan_id=scan_id,
+                    ticker=ticker,
+                    agent_name=analysis["agent_name"],
+                    agent_role=analysis["agent_role"],
+                    analysis=analysis,
+                )
 
-                    # Save to DB
-                    if scan_id:
-                        save_agent_analysis(
-                            scan_id=scan_id,
-                            ticker=ticker,
-                            agent_name=analysis["agent_name"],
-                            agent_role=analysis["agent_role"],
-                            analysis=analysis,
-                        )
+            verdict = analysis.get("verdict", "?")
+            conf = analysis.get("confidence", 0)
+            is_error = verdict == "ERROR"
 
-                    verdict = analysis.get("verdict", "?")
-                    conf = analysis.get("confidence", 0)
-                    progress.console.print(
-                        f"    [dim]{analysis['agent_name']:40s}[/dim] → "
-                        f"[{'green' if 'BUY' in verdict else 'red' if 'SELL' in verdict else 'yellow'}]"
-                        f"{verdict:12s}[/] (conf: {conf:.0%})"
-                    )
-                except Exception as e:
-                    console.print(f"    [red]{agent['name']}: Failed - {e}[/red]")
+            if is_error:
+                error_count += 1
+                console.print(
+                    f"  [{agent_num:2d}/{total}] [red]{analysis['agent_name']:40s} → ERROR[/red]"
+                )
+            else:
+                success_count += 1
+                console.print(
+                    f"  [{agent_num:2d}/{total}] [dim]{analysis['agent_name']:40s}[/dim] → "
+                    f"[{'green' if 'BUY' in verdict else 'red' if 'SELL' in verdict else 'yellow'}]"
+                    f"{verdict:12s}[/] (conf: {conf:.0%})"
+                )
 
-                progress.advance(task)
+        except Exception as e:
+            error_count += 1
+            console.print(f"  [{agent_num:2d}/{total}] [red]{agent['name']}: Failed - {e}[/red]")
 
+        # Delay between agents to spread out API calls
+        if agent_num < total:
+            time.sleep(INTER_AGENT_DELAY)
+
+    console.print(
+        f"\n  [bold]Done: {success_count} succeeded, {error_count} errors[/bold]"
+    )
     return analyses
 
 

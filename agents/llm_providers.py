@@ -48,7 +48,7 @@ class RateLimiter:
         Called when a 429 is received. Does NOT count as a used request.
         Exponential backoff: 4s, 8s, 16s, 32s.
         """
-        wait = min(4 * (2 ** attempt), 60)
+        wait = min(10 * (2 ** attempt), 120)  # 10s, 20s, 40s, 80s, 120s
         print(f"[RateLimit] 429 received — backing off {wait}s (attempt {attempt + 1})")
         time.sleep(wait)
 
@@ -63,7 +63,7 @@ class LLMPool:
     - Automatic fallback chain: preferred → next → next
     """
 
-    MAX_RETRIES = 3
+    MAX_RETRIES = 5
 
     def __init__(self):
         self._gemini_idx = 0
