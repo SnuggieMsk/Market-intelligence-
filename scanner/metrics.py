@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 # ── Local Cache ───────────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "cache")
-CACHE_MAX_AGE = 3600  # 1 hour — re-fetch if older than this
+CACHE_MAX_AGE = 14400  # 4 hours — markets are open ~6.5h, keeps data fresh enough
 YFINANCE_MAX_RETRIES = 3
 YFINANCE_RETRY_DELAY = 5  # seconds
 
@@ -55,20 +55,37 @@ def _save_cache(ticker: str, data: dict):
 def _fetch_yahoo_direct(ticker: str) -> tuple:
     """
     Fallback: fetch data directly from Yahoo Finance API via requests.
+    Tries query2 (newer) then query1 (legacy).
     Returns (hist_df, info_dict) or raises on failure.
     """
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
 
-    # Fetch historical data
     period2 = int(time.time())
     period1 = period2 - (365 * 24 * 3600)  # 1 year
-    url = (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        f"?period1={period1}&period2={period2}&interval=1d"
-    )
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
+
+    # Try multiple Yahoo Finance API hosts
+    base_urls = [
+        "https://query2.finance.yahoo.com",
+        "https://query1.finance.yahoo.com",
+    ]
+
+    data = None
+    last_err = None
+    for base in base_urls:
+        url = f"{base}/v8/finance/chart/{ticker}?period1={period1}&period2={period2}&interval=1d"
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if data is None:
+        raise RuntimeError(f"Yahoo direct API unreachable: {last_err}")
 
     result = data["chart"]["result"][0]
     timestamps = result["timestamp"]
@@ -92,47 +109,110 @@ def _fetch_yahoo_direct(ticker: str) -> tuple:
         info["regularMarketPrice"] = meta.get("regularMarketPrice", 0)
 
         # Try quoteSummary for fundamentals
-        info_url = (
-            f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-            f"?modules=defaultKeyStatistics,financialData,summaryDetail,assetProfile"
-        )
-        info_resp = requests.get(info_url, headers=headers, timeout=30)
-        if info_resp.status_code == 200:
-            modules = info_resp.json().get("quoteSummary", {}).get("result", [{}])[0]
+        for base in base_urls:
+            try:
+                info_url = (
+                    f"{base}/v10/finance/quoteSummary/{ticker}"
+                    f"?modules=defaultKeyStatistics,financialData,summaryDetail,assetProfile"
+                )
+                info_resp = requests.get(info_url, headers=headers, timeout=30)
+                if info_resp.status_code == 200:
+                    modules = info_resp.json().get("quoteSummary", {}).get("result", [{}])[0]
 
-            profile = modules.get("assetProfile", {})
-            info["sector"] = profile.get("sector", "Unknown")
-            info["industry"] = profile.get("industry", "Unknown")
+                    profile = modules.get("assetProfile", {})
+                    info["sector"] = profile.get("sector", "Unknown")
+                    info["industry"] = profile.get("industry", "Unknown")
 
-            stats = modules.get("defaultKeyStatistics", {})
-            info["trailingPE"] = stats.get("trailingPE", {}).get("raw")
-            info["forwardPE"] = stats.get("forwardPE", {}).get("raw")
-            info["priceToBook"] = stats.get("priceToBook", {}).get("raw")
-            info["shortPercentOfFloat"] = stats.get("shortPercentOfFloat", {}).get("raw")
-            info["heldPercentInsiders"] = stats.get("heldPercentInsiders", {}).get("raw")
+                    stats = modules.get("defaultKeyStatistics", {})
+                    info["trailingPE"] = stats.get("trailingPE", {}).get("raw")
+                    info["forwardPE"] = stats.get("forwardPE", {}).get("raw")
+                    info["priceToBook"] = stats.get("priceToBook", {}).get("raw")
+                    info["shortPercentOfFloat"] = stats.get("shortPercentOfFloat", {}).get("raw")
+                    info["heldPercentInsiders"] = stats.get("heldPercentInsiders", {}).get("raw")
 
-            fin = modules.get("financialData", {})
-            info["debtToEquity"] = fin.get("debtToEquity", {}).get("raw")
-            info["revenueGrowth"] = fin.get("revenueGrowth", {}).get("raw")
-            info["earningsGrowth"] = fin.get("earningsGrowth", {}).get("raw")
-            info["freeCashflow"] = fin.get("freeCashflow", {}).get("raw")
-            info["recommendationMean"] = fin.get("recommendationMean", {}).get("raw")
+                    fin = modules.get("financialData", {})
+                    info["debtToEquity"] = fin.get("debtToEquity", {}).get("raw")
+                    info["revenueGrowth"] = fin.get("revenueGrowth", {}).get("raw")
+                    info["earningsGrowth"] = fin.get("earningsGrowth", {}).get("raw")
+                    info["freeCashflow"] = fin.get("freeCashflow", {}).get("raw")
+                    info["recommendationMean"] = fin.get("recommendationMean", {}).get("raw")
 
-            summary = modules.get("summaryDetail", {})
-            info["marketCap"] = summary.get("marketCap", {}).get("raw", info.get("marketCap", 0))
+                    summary = modules.get("summaryDetail", {})
+                    info["marketCap"] = summary.get("marketCap", {}).get("raw", info.get("marketCap", 0))
+                    break  # Got fundamentals, stop trying
+            except Exception:
+                continue
     except Exception:
         pass  # Partial info is fine
 
     return hist, info
 
 
+def _fetch_google_finance(ticker: str) -> tuple:
+    """
+    Third fallback: scrape Google Finance for basic price data.
+    Limited to recent price + basic info, no full 1-year history.
+    Returns (hist_df, info_dict) or raises on failure.
+    """
+    from bs4 import BeautifulSoup
+
+    # Convert ticker: RELIANCE.NS → RELIANCE:NSE
+    symbol = ticker.replace(".NS", "").replace(".BO", "")
+    exchange = "NSE" if ".NS" in ticker or not ".BO" in ticker else "BOM"
+
+    url = f"https://www.google.com/finance/quote/{symbol}:{exchange}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Extract current price
+    price_div = soup.find("div", {"class": "YMlKec fxKbKc"})
+    if not price_div:
+        raise RuntimeError(f"Could not find price on Google Finance for {symbol}")
+
+    price_text = price_div.text.strip().replace("₹", "").replace(",", "").strip()
+    current_price = float(price_text)
+
+    # Build minimal history from current price (enough for basic metrics)
+    # Google Finance doesn't give full historical data easily, so we create
+    # a synthetic 1-day frame and rely on cache for subsequent runs
+    now = pd.Timestamp.now()
+    hist = pd.DataFrame({
+        "Open": [current_price],
+        "High": [current_price * 1.01],
+        "Low": [current_price * 0.99],
+        "Close": [current_price],
+        "Volume": [0],
+    }, index=[now])
+
+    info = {
+        "shortName": symbol,
+        "regularMarketPrice": current_price,
+        "sector": "Unknown",
+        "industry": "Unknown",
+        "marketCap": 0,
+    }
+
+    print(f"[GoogleFinance] {ticker}: ₹{current_price:.2f}")
+    return hist, info
+
+
 def _fetch_stock_data(ticker: str) -> tuple:
     """
-    Fetch stock data with retry and fallback.
-    Tries yfinance first, then direct Yahoo API.
+    Fetch stock data with 3-level fallback:
+    1. yfinance (with retry for rate limits)
+    2. Direct Yahoo Finance API (query2/query1)
+    3. Google Finance scraper (basic price only)
     Returns (hist_df, info_dict).
     """
-    # Try yfinance with retries
+    errors = []
+
+    # Level 1: yfinance with retries
     for attempt in range(YFINANCE_MAX_RETRIES):
         try:
             stock = yf.Ticker(ticker)
@@ -140,6 +220,11 @@ def _fetch_stock_data(ticker: str) -> tuple:
             if not hist.empty:
                 info = stock.info
                 return hist, info
+            elif attempt == 0:
+                # Empty result on first try — might just be a glitch, retry once quickly
+                print(f"[yfinance] {ticker} returned empty data, retrying in 2s...")
+                time.sleep(2)
+                continue
         except Exception as e:
             err = str(e).lower()
             if "rate" in err or "429" in err or "too many" in err:
@@ -147,15 +232,26 @@ def _fetch_stock_data(ticker: str) -> tuple:
                 print(f"[yfinance] {ticker} rate limited, waiting {wait}s (attempt {attempt+1})")
                 time.sleep(wait)
             else:
+                errors.append(f"yfinance: {e}")
                 break  # Non-rate-limit error, try fallback
 
-    # Fallback: direct Yahoo Finance API
+    # Level 2: Direct Yahoo Finance API (query2 + query1)
     print(f"[yfinance] {ticker} falling back to direct Yahoo API...")
     try:
         hist, info = _fetch_yahoo_direct(ticker)
         return hist, info
     except Exception as e2:
-        raise RuntimeError(f"Both yfinance and direct API failed for {ticker}: {e2}")
+        errors.append(f"yahoo_direct: {e2}")
+
+    # Level 3: Google Finance scraper (basic price data)
+    print(f"[Yahoo] {ticker} also failed, trying Google Finance...")
+    try:
+        hist, info = _fetch_google_finance(ticker)
+        return hist, info
+    except Exception as e3:
+        errors.append(f"google_finance: {e3}")
+
+    raise RuntimeError(f"All data sources failed for {ticker}: {'; '.join(errors)}")
 
 
 def compute_all_metrics(ticker: str) -> Optional[dict]:
