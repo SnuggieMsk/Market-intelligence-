@@ -1,18 +1,64 @@
 """
 Computes 32+ metrics for each stock to identify standout opportunities.
 All data sourced from yfinance (free, no API key).
+Caches data locally to avoid redundant downloads.
 """
 
+import os
+import json
+import time
 import numpy as np
 import yfinance as yf
 from typing import Optional
+
+# ── Local Cache ───────────────────────────────────────────────────────────────
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "cache")
+CACHE_MAX_AGE = 3600  # 1 hour — re-fetch if older than this
+
+
+def _cache_path(ticker: str) -> str:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    safe_name = ticker.replace(".", "_").replace("/", "_")
+    return os.path.join(CACHE_DIR, f"{safe_name}.json")
+
+
+def _load_cache(ticker: str) -> Optional[dict]:
+    path = _cache_path(ticker)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as f:
+            cached = json.load(f)
+        age = time.time() - cached.get("_cached_at", 0)
+        if age > CACHE_MAX_AGE:
+            return None  # Stale
+        return cached
+    except Exception:
+        return None
+
+
+def _save_cache(ticker: str, data: dict):
+    path = _cache_path(ticker)
+    data["_cached_at"] = time.time()
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass  # Non-critical
 
 
 def compute_all_metrics(ticker: str) -> Optional[dict]:
     """
     Compute all 32+ metrics for a given ticker.
+    Uses local cache to avoid re-downloading within 1 hour.
     Returns None if data is insufficient.
     """
+    # Check cache first
+    cached = _load_cache(ticker)
+    if cached:
+        cached.pop("_cached_at", None)
+        return cached
+
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1y")
@@ -258,16 +304,20 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         # METADATA
         # ══════════════════════════════════════════════════════════════════════
 
-        return {
+        result = {
             "ticker": ticker,
             "company_name": info.get("shortName", ticker),
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
             "market_cap": info.get("marketCap", 0),
-            "current_price": latest_close,
-            "metrics": metrics,
+            "current_price": float(latest_close),
+            "metrics": {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in metrics.items()},
             "standout_reasons": reasons,
         }
+
+        # Cache for re-runs
+        _save_cache(ticker, result)
+        return result
 
     except Exception as e:
         print(f"[Metrics] Error computing metrics for {ticker}: {e}")
