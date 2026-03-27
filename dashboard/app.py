@@ -651,8 +651,8 @@ elif page == "Agent Reports":
         scores = [a.get("score", 5) for a in all_analyses]
         colors = [VERDICT_COLORS.get(a.get("verdict", "NEUTRAL"), "#D4A574") for a in all_analyses]
         fig2 = go.Figure(data=[go.Bar(x=scores, y=names, orientation="h", marker_color=colors)])
-        fig2.update_layout(**CHART_LAYOUT, height=max(400, total * 22),
-                           title="Score by Agent", yaxis=dict(autorange="reversed"))
+        _layout = {**CHART_LAYOUT, "yaxis": {**CHART_LAYOUT.get("yaxis", {}), "autorange": "reversed"}}
+        fig2.update_layout(**_layout, height=max(400, total * 22), title="Score by Agent")
         st.plotly_chart(fig2, use_container_width=True)
 
     # Confidence vs Score scatter
@@ -988,9 +988,10 @@ elif page == "Quant Predictions":
             fig.add_hline(y=current_price, line_color="#FAF3E0", line_width=3,
                           annotation_text=f"Current: {format_inr(current_price)}")
 
-        fig.update_layout(**CHART_LAYOUT, height=500, title="Price Levels Map",
-                          yaxis=dict(range=[min(l["Price"] for l in all_levels) * 0.95,
-                                            max(l["Price"] for l in all_levels) * 1.05]))
+        _layout2 = {**CHART_LAYOUT, "yaxis": {**CHART_LAYOUT.get("yaxis", {}),
+                    "range": [min(l["Price"] for l in all_levels) * 0.95,
+                              max(l["Price"] for l in all_levels) * 1.05]}}
+        fig.update_layout(**_layout2, height=500, title="Price Levels Map")
         st.plotly_chart(fig, use_container_width=True)
         st.dataframe(levels_df, use_container_width=True, hide_index=True)
 
