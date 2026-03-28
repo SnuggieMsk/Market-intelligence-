@@ -17,6 +17,9 @@ GROQ_API_KEYS = [
 ]
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 
+# Gemini 2.5 Flash Lite — Tier 1 paid key (4K RPM, 4M TPM — the workhorse)
+GEMINI_LITE_API_KEY = os.getenv("GEMINI_LITE_API_KEY", "").strip()
+
 # ── Market ────────────────────────────────────────────────────────────────────
 MARKET = "INDIA"                    # INDIA or US
 CURRENCY_SYMBOL = "₹"
@@ -39,15 +42,22 @@ CUSTOM_WATCHLIST = []  # Add NSE tickers manually, e.g. ["ZOMATO", "PAYTM"]
 # ── Agent Settings ────────────────────────────────────────────────────────────
 MAX_CONCURRENT_AGENTS = 1           # Sequential: 1 at a time to avoid rate limits
 AGENT_TIMEOUT_SECONDS = 120         # Max time per agent analysis
-GEMINI_RPM_PER_KEY = 8               # Conservative: accounts for TPM limits too
-GROQ_RPM_PER_KEY = 10               # Groq free TPM is 6000 — ~5-6 calls/min realistic
-OPENROUTER_RPM = 8                  # OpenRouter free tier is strict
-INTER_AGENT_DELAY = 5               # 5s gap = max 12 calls/min, safe for all providers
+GEMINI_LITE_RPM = 2000               # Tier 1 paid: 4K RPM limit, 2K conservative
+GEMINI_RPM_PER_KEY = 10              # gemini-2.5-flash free: 15 RPM, 10 conservative for TPM headroom
+GROQ_RPM_PER_KEY = 5                # Groq free: 6000 TPM / ~1800 tokens/call ~ 3 calls/min
+OPENROUTER_RPM = 3                  # OpenRouter free: ~3-5 RPM realistic
+INTER_AGENT_DELAY = 2               # 2s gap — Gemini Lite Tier 1 has 4K RPM, no need for long waits
+
+# Provider priority: gemini_lite is #1 (paid Tier 1, 4K RPM, 4M TPM).
+# Free Gemini keys are backup. Groq and OpenRouter are last-resort.
+PROVIDER_PRIORITY = ["gemini_lite", "gemini", "groq", "openrouter"]
+PROVIDER_DEMOTE_AFTER_FAILURES = 2  # Consecutive 429s before demoting a provider
 
 # ── LLM Model Selection ──────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_LITE_MODEL = "gemini-2.5-flash-lite"  # Tier 1 paid: fastest, cheapest, 4K RPM
+GEMINI_MODEL = "gemini-2.5-flash"            # Free tier backup: 15 RPM per key
 GROQ_MODEL = "llama-3.3-70b-versatile"
-OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+OPENROUTER_MODEL = "nousresearch/hermes-3-llama-3.1-405b:free"  # 405B param, best free option
 
 # ── Database ──────────────────────────────────────────────────────────────────
 DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "market_intel.db")

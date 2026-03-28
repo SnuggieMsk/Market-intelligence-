@@ -1,11 +1,11 @@
 .env
 __pycache__/
 *.pyc
-data/*.db
 data/cache/
-.streamlit/
+.streamlit/secrets.toml
 *.egg-info/
 dist/
 build/
 .venv/
 venv/
+.claude/

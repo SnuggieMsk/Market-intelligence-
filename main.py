@@ -48,8 +48,8 @@ def run_pipeline():
         console.print("[dim]Wait for rate limits to reset, or check your API keys in .env[/dim]")
         return
 
-    console.print(f"\n[bold]Ready: {len(alive)} provider(s) alive → "
-                  f"44 agents (36 base + 8 research) will use {', '.join(alive)}[/bold]")
+    console.print(f"\n[bold]Ready: {len(alive)} provider(s) alive -> "
+                  f"47 agents (36 base + 11 research) will use {', '.join(alive)}[/bold]")
 
     # Step 1: Scan the market
     console.print("\n[bold]STEP 1/5: Scanning Market[/bold]")
@@ -77,8 +77,8 @@ def run_pipeline():
     console.print("\n[bold]STEP 3/5: Running 36 AI Agents[/bold]")
     all_analyses = run_agents_on_all_stocks(standout_stocks)
 
-    # Step 4: Run 8 research agents (news + earnings cross-reference)
-    console.print("\n[bold]STEP 4/5: Running 8 Research Agents (news + earnings verification)[/bold]")
+    # Step 4: Run 11 research agents (news + earnings + regulatory cross-reference)
+    console.print("\n[bold]STEP 4/5: Running 11 Research Agents (news + earnings + regulatory verification)[/bold]")
     research_analyses = run_research_on_all_stocks(standout_stocks, all_analyses)
 
     # Merge research analyses into main analyses for aggregation
@@ -95,7 +95,7 @@ def run_pipeline():
     console.print(Panel.fit(
         f"[bold green]Pipeline Complete![/bold green]\n"
         f"Stocks analyzed: {len(standout_stocks)}\n"
-        f"Agent analyses: {total_analyses} (36 base + 8 research per stock)\n"
+        f"Agent analyses: {total_analyses} (36 base + 11 research per stock)\n"
         f"Quant predictions: {len(quant_results)}\n"
         f"Reports generated: {len(reports)}\n"
         f"Time: {elapsed/60:.1f} minutes\n\n"
@@ -144,12 +144,28 @@ def main():
     parser.add_argument("--dashboard", action="store_true", help="Launch dashboard only")
     parser.add_argument("--scan-only", action="store_true", help="Run scanner only (no agents)")
     parser.add_argument("--quant-only", action="store_true", help="Run scanner + quant engine only")
+    parser.add_argument("--backfill", action="store_true", help="Fill data gaps (quant, research, aggregation)")
+    parser.add_argument("--audit", action="store_true", help="Show data completeness audit")
+    parser.add_argument("--ticker", type=str, help="Target specific ticker for --backfill")
     args = parser.parse_args()
 
     print_banner()
     init_db()
 
-    if args.dashboard:
+    if args.audit:
+        from pipeline.backfill import backfill_all, print_audit
+        from data.database import get_completeness_all
+        print_audit(get_completeness_all())
+    elif args.backfill:
+        from pipeline.backfill import backfill_stock, backfill_all
+        if args.ticker:
+            ticker = args.ticker.strip().upper()
+            if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                ticker = f"{ticker}.NS"
+            backfill_stock(ticker)
+        else:
+            backfill_all()
+    elif args.dashboard:
         launch_dashboard()
     elif args.scan_only:
         scan_market()

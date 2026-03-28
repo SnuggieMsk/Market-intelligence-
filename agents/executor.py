@@ -121,7 +121,7 @@ def run_single_agent(agent: dict, stock: dict) -> dict:
         raw_response = llm_pool.call_llm(
             prompt=prompt,
             system_instruction=agent["system_prompt"],
-            prefer=agent.get("prefer_provider", "gemini"),
+            prefer=agent.get("prefer_provider", "gemini_lite"),
         )
         analysis = parse_agent_response(raw_response)
         analysis["agent_name"] = agent["name"]
@@ -173,11 +173,12 @@ _health_check_done = False
 _alive_providers = []
 
 
-def run_all_agents_on_stock(stock: dict) -> list:
+def run_all_agents_on_stock(stock: dict, stop_flag=None) -> list:
     """
     Run all 36 agents against a single stock.
     Runs sequentially with delays to respect free tier rate limits.
     Only uses providers that passed health check — zero wasted calls.
+    stop_flag: threading.Event — if set, stops at the next agent boundary.
     """
     ticker = stock["ticker"]
     scan_id = stock.get("scan_id")
@@ -188,17 +189,37 @@ def run_all_agents_on_stock(stock: dict) -> list:
     healthy = run_health_check()
     if healthy:
         console.print(f"[dim]Routing to: {', '.join(healthy)}[/dim]")
-        # Redistribute agents to only use healthy providers
-        for idx, agent in enumerate(AGENT_PERSONALITIES):
-            agent["prefer_provider"] = healthy[idx % len(healthy)]
+        # All agents prefer the highest-priority alive provider (gemini_lite > gemini > groq).
+        # Fallback to other providers happens per-call inside call_llm.
+        from config.settings import PROVIDER_PRIORITY
+        primary = next((p for p in PROVIDER_PRIORITY if p in healthy), healthy[0])
+        for agent in AGENT_PERSONALITIES:
+            agent["prefer_provider"] = primary
 
     analyses = []
     success_count = 0
     error_count = 0
+    consecutive_errors = 0
+    current_delay = INTER_AGENT_DELAY  # Adaptive delay — increases on rate limit errors
 
     for i, agent in enumerate(AGENT_PERSONALITIES):
+        # Check stop flag before each agent
+        if stop_flag and stop_flag.is_set():
+            console.print(f"\n  [yellow]Stopped by user after {success_count} agents[/yellow]")
+            break
+
         agent_num = i + 1
         total = len(AGENT_PERSONALITIES)
+
+        # If we've had consecutive rate-limit errors, pause for a full window reset
+        if consecutive_errors >= 3:
+            cooldown = 60
+            console.print(
+                f"  [yellow]PAUSE {consecutive_errors} consecutive errors — cooling down {cooldown}s for rate limits to reset...[/yellow]"
+            )
+            time.sleep(cooldown)
+            consecutive_errors = 0  # Reset counter after cooldown
+            current_delay = INTER_AGENT_DELAY  # Reset delay too
 
         try:
             analysis = run_single_agent(agent, stock)
@@ -220,24 +241,31 @@ def run_all_agents_on_stock(stock: dict) -> list:
 
             if is_error:
                 error_count += 1
+                consecutive_errors += 1
+                # Increase delay when hitting errors (likely rate limited)
+                current_delay = min(current_delay + 3, 30)
                 console.print(
-                    f"  [{agent_num:2d}/{total}] [red]{analysis['agent_name']:40s} → ERROR[/red]"
+                    f"  [{agent_num:2d}/{total}] [red]{analysis['agent_name']:40s} -> ERROR[/red]"
                 )
             else:
                 success_count += 1
+                consecutive_errors = 0  # Reset on success
+                current_delay = max(current_delay - 1, INTER_AGENT_DELAY)  # Ease back down
                 console.print(
-                    f"  [{agent_num:2d}/{total}] [dim]{analysis['agent_name']:40s}[/dim] → "
+                    f"  [{agent_num:2d}/{total}] [dim]{analysis['agent_name']:40s}[/dim] -> "
                     f"[{'green' if 'BUY' in verdict else 'red' if 'SELL' in verdict else 'yellow'}]"
                     f"{verdict:12s}[/] (conf: {conf:.0%})"
                 )
 
         except Exception as e:
             error_count += 1
+            consecutive_errors += 1
+            current_delay = min(current_delay + 3, 30)
             console.print(f"  [{agent_num:2d}/{total}] [red]{agent['name']}: Failed - {e}[/red]")
 
-        # Delay between agents to spread out API calls
+        # Adaptive delay between agents
         if agent_num < total:
-            time.sleep(INTER_AGENT_DELAY)
+            time.sleep(current_delay)
 
     console.print(
         f"\n  [bold]Done: {success_count} succeeded, {error_count} errors[/bold]"
@@ -253,7 +281,7 @@ def run_agents_on_all_stocks(stocks: list) -> dict:
     all_results = {}
 
     for i, stock in enumerate(stocks, 1):
-        console.print(f"\n[bold cyan]═══ Stock {i}/{len(stocks)}: {stock['ticker']} ═══[/bold cyan]")
+        console.print(f"\n[bold cyan]=== Stock {i}/{len(stocks)}: {stock['ticker']} ===[/bold cyan]")
         analyses = run_all_agents_on_stock(stock)
         all_results[stock["ticker"]] = analyses
 
@@ -277,10 +305,11 @@ RESEARCH_PROMPT_TEMPLATE = """
 ═══ YOUR RESEARCH ANALYSIS TASK ═══
 
 You have access to BOTH the stock's quantitative metrics AND real-world research data
-(news, earnings, annual reports). Cross-reference them.
+(news, earnings, annual reports, regulatory developments). Cross-reference them.
 
 Your job is to verify whether the other agents' analysis matches reality.
 Look for gaps between what the numbers say and what's actually happening in the real world.
+Consider regulatory, governance, and policy developments that may create tailwinds or headwinds.
 
 Respond in this exact JSON format:
 {{
@@ -326,9 +355,9 @@ def _build_existing_verdicts_summary(analyses: list) -> str:
     return "\n".join(lines)
 
 
-def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
+def run_research_agents_on_stock(stock: dict, base_analyses: list, stop_flag=None) -> list:
     """
-    Run 8 research agents that cross-reference news/earnings/reports
+    Run 11 research agents that cross-reference news/earnings/reports/regulations
     against the base 36 agents' analysis. Returns list of research analyses.
     """
     from research.news_fetcher import build_research_context
@@ -345,19 +374,38 @@ def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
     research_context = build_research_context(ticker, company_name)
     existing_verdicts = _build_existing_verdicts_summary(base_analyses)
 
-    # Ensure health check done and redistribute
+    # Ensure health check done — all research agents prefer primary provider
     healthy = run_health_check()
     if healthy:
-        for idx, agent in enumerate(RESEARCH_AGENT_PERSONALITIES):
-            agent["prefer_provider"] = healthy[idx % len(healthy)]
+        from config.settings import PROVIDER_PRIORITY
+        primary = next((p for p in PROVIDER_PRIORITY if p in healthy), healthy[0])
+        for agent in RESEARCH_AGENT_PERSONALITIES:
+            agent["prefer_provider"] = primary
 
     analyses = []
     success_count = 0
     error_count = 0
+    consecutive_errors = 0
+    current_delay = INTER_AGENT_DELAY
 
     for i, agent in enumerate(RESEARCH_AGENT_PERSONALITIES):
+        # Check stop flag before each research agent
+        if stop_flag and stop_flag.is_set():
+            console.print(f"\n  [yellow]Stopped by user after {success_count} research agents[/yellow]")
+            break
+
         agent_num = i + 1
         total = len(RESEARCH_AGENT_PERSONALITIES)
+
+        # Cooldown after consecutive errors
+        if consecutive_errors >= 2:
+            cooldown = 60
+            console.print(
+                f"  [yellow]PAUSE {consecutive_errors} consecutive errors — cooling down {cooldown}s...[/yellow]"
+            )
+            time.sleep(cooldown)
+            consecutive_errors = 0
+            current_delay = INTER_AGENT_DELAY
 
         prompt = RESEARCH_PROMPT_TEMPLATE.format(
             stock_context=stock_context,
@@ -370,7 +418,7 @@ def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
             raw_response = llm_pool.call_llm(
                 prompt=prompt,
                 system_instruction=agent["system_prompt"],
-                prefer=agent.get("prefer_provider", "groq"),
+                prefer=agent.get("prefer_provider", "gemini_lite"),
             )
             analysis = parse_agent_response(raw_response)
             analysis["agent_name"] = agent["name"]
@@ -390,21 +438,27 @@ def run_research_agents_on_stock(stock: dict, base_analyses: list) -> list:
             conf = analysis.get("confidence", 0)
             if verdict == "ERROR":
                 error_count += 1
-                console.print(f"  [R{agent_num}/{total}] [red]{analysis['agent_name']:40s} → ERROR[/red]")
+                consecutive_errors += 1
+                current_delay = min(current_delay + 3, 30)
+                console.print(f"  [R{agent_num}/{total}] [red]{analysis['agent_name']:40s} -> ERROR[/red]")
             else:
                 success_count += 1
+                consecutive_errors = 0
+                current_delay = max(current_delay - 1, INTER_AGENT_DELAY)
                 console.print(
-                    f"  [R{agent_num}/{total}] [dim]{analysis['agent_name']:40s}[/dim] → "
+                    f"  [R{agent_num}/{total}] [dim]{analysis['agent_name']:40s}[/dim] -> "
                     f"[{'green' if 'BUY' in verdict else 'red' if 'SELL' in verdict else 'yellow'}]"
                     f"{verdict:12s}[/] (conf: {conf:.0%})"
                 )
 
         except Exception as e:
             error_count += 1
+            consecutive_errors += 1
+            current_delay = min(current_delay + 3, 30)
             console.print(f"  [R{agent_num}/{total}] [red]{agent['name']}: Failed - {e}[/red]")
 
         if agent_num < total:
-            time.sleep(INTER_AGENT_DELAY)
+            time.sleep(current_delay)
 
     console.print(f"\n  [bold]Research agents: {success_count} succeeded, {error_count} errors[/bold]")
     return analyses
@@ -417,7 +471,7 @@ def run_research_on_all_stocks(stocks: list, all_base_analyses: dict) -> dict:
     for i, stock in enumerate(stocks, 1):
         ticker = stock["ticker"]
         base = all_base_analyses.get(ticker, [])
-        console.print(f"\n[bold blue]═══ Research {i}/{len(stocks)}: {ticker} ═══[/bold blue]")
+        console.print(f"\n[bold blue]=== Research {i}/{len(stocks)}: {ticker} ===[/bold blue]")
         research = run_research_agents_on_stock(stock, base)
         all_research[ticker] = research
 

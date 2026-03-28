@@ -105,7 +105,7 @@ def scan_market() -> list:
     3. Score and rank
     4. Return top standouts
     """
-    console.print("\n[bold cyan]═══ Market Intelligence Scanner ═══[/bold cyan]\n")
+    console.print("\n[bold cyan]=== Market Intelligence Scanner ===[/bold cyan]\n")
 
     # Step 1: Get universe
     console.print("[yellow]Fetching stock universe...[/yellow]")

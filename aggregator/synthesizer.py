@@ -4,11 +4,14 @@ into a cohesive, actionable report for each stock.
 """
 
 import json
+import time
 from rich.console import Console
 from agents.llm_providers import llm_pool, parse_agent_response
 from data.database import save_aggregated_report
+from research.research_agents import RESEARCH_ROLES
+from config.settings import INTER_AGENT_DELAY
 
-console = Console()
+console = Console(highlight=False, force_terminal=True)
 
 
 # ── Meta-Aggregator Agents ────────────────────────────────────────────────────
@@ -57,13 +60,8 @@ Include: verdict, conviction, time horizon, position sizing suggestion, key risk
 def build_analyses_summary(analyses: list) -> str:
     """Format all agent analyses into a readable summary for meta-agents."""
     # Separate base agents from research agents
-    research_roles = {
-        "news_reality_check", "earnings_analyst", "annual_report_forensic",
-        "research_cross_check", "management_credibility", "competitive_intel",
-        "macro_news_correlator", "narrative_vs_numbers",
-    }
-    base_analyses = [a for a in analyses if a.get("agent_role") not in research_roles]
-    research_analyses = [a for a in analyses if a.get("agent_role") in research_roles]
+    base_analyses = [a for a in analyses if a.get("agent_role") not in RESEARCH_ROLES]
+    research_analyses = [a for a in analyses if a.get("agent_role") in RESEARCH_ROLES]
 
     lines = [f"═══ INDIVIDUAL AGENT ANALYSES ({len(base_analyses)} Base + {len(research_analyses)} Research) ═══\n"]
 
@@ -188,34 +186,155 @@ Respond in this JSON format:
 """
 
 
+def _math_based_aggregation(analyses: list) -> dict:
+    """
+    Fallback aggregation using pure math when LLM providers are unavailable.
+    Computes weighted verdict from agent votes based on confidence scores.
+    """
+    verdict_scores = {"STRONG_BUY": 10, "BUY": 7.5, "NEUTRAL": 5, "SELL": 2.5, "STRONG_SELL": 0}
+    verdict_weights = []
+    scores = []
+    bull_points = []
+    bear_points = []
+    risks = []
+    catalysts = []
+
+    for a in analyses:
+        v = a.get("verdict", "NEUTRAL")
+        conf = a.get("confidence", 0.5)
+        score = a.get("score", 5.0)
+        name = a.get("agent_name", "Unknown")
+
+        # Weighted vote: verdict numeric value × confidence
+        v_score = verdict_scores.get(v, 5)
+        verdict_weights.append((v_score, conf))
+        scores.append(score)
+
+        # Collect bull/bear reasoning
+        reasoning = a.get("reasoning", "")
+        if v in ("STRONG_BUY", "BUY") and reasoning:
+            bull_points.append(f"{name}: {reasoning[:100]}")
+        elif v in ("STRONG_SELL", "SELL") and reasoning:
+            bear_points.append(f"{name}: {reasoning[:100]}")
+
+        # Collect risks and catalysts (may be JSON strings or lists)
+        raw_risks = a.get("risks") or []
+        if isinstance(raw_risks, str):
+            try:
+                raw_risks = json.loads(raw_risks)
+            except (json.JSONDecodeError, TypeError):
+                raw_risks = []
+        for r in raw_risks:
+            if isinstance(r, str) and len(r) > 3 and r not in risks:
+                risks.append(r)
+
+        raw_cats = a.get("catalysts") or []
+        if isinstance(raw_cats, str):
+            try:
+                raw_cats = json.loads(raw_cats)
+            except (json.JSONDecodeError, TypeError):
+                raw_cats = []
+        for c in raw_cats:
+            if isinstance(c, str) and len(c) > 3 and c not in catalysts:
+                catalysts.append(c)
+
+    # Weighted average verdict score
+    if verdict_weights:
+        total_weight = sum(conf for _, conf in verdict_weights)
+        if total_weight > 0:
+            weighted_avg = sum(v * c for v, c in verdict_weights) / total_weight
+        else:
+            weighted_avg = 5.0
+    else:
+        weighted_avg = 5.0
+
+    # Map back to verdict
+    if weighted_avg >= 8.5:
+        overall_verdict = "STRONG_BUY"
+    elif weighted_avg >= 6.5:
+        overall_verdict = "BUY"
+    elif weighted_avg >= 3.5:
+        overall_verdict = "NEUTRAL"
+    elif weighted_avg >= 1.5:
+        overall_verdict = "SELL"
+    else:
+        overall_verdict = "STRONG_SELL"
+
+    # Average score
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 5.0
+
+    # Verdict distribution for summary
+    dist = {}
+    for a in analyses:
+        v = a.get("verdict", "NEUTRAL")
+        dist[v] = dist.get(v, 0) + 1
+    dist_str = ", ".join(f"{v}: {c}" for v, c in sorted(dist.items(), key=lambda x: -x[1]))
+
+    consensus = (
+        f"Math-based aggregation of {len(analyses)} agents. "
+        f"Verdict distribution: {dist_str}. "
+        f"Confidence-weighted score: {weighted_avg:.1f}/10."
+    )
+
+    # Recommendation
+    if overall_verdict in ("STRONG_BUY", "BUY"):
+        rec = "Consider buying — majority of agents are bullish."
+    elif overall_verdict in ("STRONG_SELL", "SELL"):
+        rec = "Consider selling or avoiding — majority of agents are bearish."
+    else:
+        rec = "Hold or wait — agents are divided, no clear consensus."
+
+    return {
+        "overall_verdict": overall_verdict,
+        "overall_score": avg_score,
+        "consensus_summary": consensus,
+        "recommendation": rec,
+        "key_risks": risks[:5],
+        "key_catalysts": catalysts[:5],
+        "bull_case": "; ".join(bull_points[:3]) if bull_points else "Limited bullish sentiment",
+        "bear_case": "; ".join(bear_points[:3]) if bear_points else "Limited bearish sentiment",
+    }
+
+
 def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: dict) -> dict:
     """
     Run meta-aggregator agents to synthesize all individual analyses.
     Returns the final aggregated report.
     """
-    console.print(f"\n[bold yellow]═══ Aggregating {len(analyses)} analyses for {ticker} ═══[/bold yellow]")
+    console.print(f"\n[bold yellow]=== Aggregating {len(analyses)} analyses for {ticker} ===[/bold yellow]")
+
+    # Fresh health check — agents may have exhausted one provider's rate limits
+    console.print("  [dim]Running fresh health check for aggregation...[/dim]")
+    llm_pool._demoted_providers.clear()
+    llm_pool._consecutive_429s = {"gemini_lite": 0, "gemini": 0, "groq": 0, "openrouter": 0}
+    health = llm_pool.check_provider_health()
+    alive = [p for p, ok in health.items() if ok]
+    console.print(f"  [dim]Alive providers: {', '.join(alive) if alive else 'NONE'}[/dim]")
 
     analyses_summary = build_analyses_summary(analyses)
 
     # Step 1: Run the three synthesis agents
     synthesis_results = {}
 
-    for meta_agent in META_AGENTS[:3]:  # Data, Sentiment, Prediction synthesizers
+    for i, meta_agent in enumerate(META_AGENTS[:3]):  # Data, Sentiment, Prediction synthesizers
+        if i > 0:
+            time.sleep(INTER_AGENT_DELAY)  # Avoid back-to-back rate limits
         console.print(f"  [cyan]Running {meta_agent['name']}...[/cyan]")
         try:
             prompt = SYNTHESIS_PROMPT.format(analyses_summary=analyses_summary)
             raw = llm_pool.call_llm(
                 prompt=prompt,
                 system_instruction=meta_agent["system_prompt"],
-                prefer="gemini",
+                prefer="gemini_lite",
             )
             synthesis_results[meta_agent["role"]] = parse_agent_response(raw)
-            console.print(f"  [green]✓ {meta_agent['name']} complete[/green]")
+            console.print(f"  [green]OK {meta_agent['name']} complete[/green]")
         except Exception as e:
-            console.print(f"  [red]✗ {meta_agent['name']} failed: {e}[/red]")
+            console.print(f"  [red]FAIL {meta_agent['name']} failed: {e}[/red]")
             synthesis_results[meta_agent["role"]] = {"summary": f"Failed: {e}"}
 
     # Step 2: Final Verdict from CIO
+    time.sleep(INTER_AGENT_DELAY)
     console.print(f"  [cyan]Running Final Verdict Chief...[/cyan]")
     try:
         final_prompt = FINAL_VERDICT_PROMPT.format(
@@ -231,13 +350,21 @@ def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: di
         )
         final_report = parse_agent_response(raw)
     except Exception as e:
-        console.print(f"  [red]✗ Final Verdict failed: {e}[/red]")
-        final_report = {
-            "overall_verdict": "NEUTRAL",
-            "overall_score": 5.0,
-            "consensus_summary": f"Aggregation failed: {e}",
-            "recommendation": "Manual review required",
-        }
+        console.print(f"  [red]FAIL Final Verdict LLM failed: {e}[/red]")
+        console.print(f"  [yellow]Computing math-based aggregation from {len(analyses)} agent votes...[/yellow]")
+        final_report = _math_based_aggregation(analyses)
+
+    # Normalize field names — LLMs sometimes use "verdict" instead of "overall_verdict"
+    if "overall_verdict" not in final_report and "verdict" in final_report:
+        final_report["overall_verdict"] = final_report["verdict"]
+    if "overall_score" not in final_report and "score" in final_report:
+        final_report["overall_score"] = final_report["score"]
+    if "consensus_summary" not in final_report and "reasoning" in final_report:
+        final_report["consensus_summary"] = final_report["reasoning"]
+    if "key_risks" not in final_report and "risks" in final_report:
+        final_report["key_risks"] = final_report["risks"]
+    if "key_catalysts" not in final_report and "catalysts" in final_report:
+        final_report["key_catalysts"] = final_report["catalysts"]
 
     # Merge synthesis into final report
     final_report["data_summary"] = synthesis_results.get("data_synthesis", {}).get("summary", "")

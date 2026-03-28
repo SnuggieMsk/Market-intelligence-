@@ -294,11 +294,8 @@ def get_quant_predictions_for_ticker(ticker):
 
 def get_research_analyses_for_ticker(ticker):
     """Get only research agent analyses (not base 36 agents)."""
-    research_roles = [
-        "news_reality_check", "earnings_analyst", "annual_report_forensic",
-        "research_cross_check", "management_credibility", "competitive_intel",
-        "macro_news_correlator", "narrative_vs_numbers",
-    ]
+    from research.research_agents import RESEARCH_ROLES
+    research_roles = list(RESEARCH_ROLES)
     conn = get_connection()
     placeholders = ",".join(["?" for _ in research_roles])
     rows = conn.execute(f"""
@@ -310,3 +307,91 @@ def get_research_analyses_for_ticker(ticker):
     """, (ticker, *research_roles)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_completeness_for_ticker(ticker):
+    """
+    Check data completeness for a single ticker.
+    Looks across ALL scan_ids for the ticker (agents may be linked to an older scan).
+    Returns dict with: has_scan, agent_count, research_count, has_quant, has_report, scan_id, best_scan_id.
+    """
+    from research.research_agents import RESEARCH_ROLES
+    research_roles = list(RESEARCH_ROLES)
+    conn = get_connection()
+
+    # Latest scan
+    scan = conn.execute(
+        "SELECT id FROM scan_results WHERE ticker = ? ORDER BY scan_timestamp DESC LIMIT 1",
+        (ticker,)
+    ).fetchone()
+    latest_scan_id = scan["id"] if scan else None
+
+    # Count agents across ALL scan_ids for this ticker (not just latest)
+    placeholders = ",".join(["?" for _ in research_roles])
+    base_count = conn.execute(
+        f"SELECT COUNT(*) as c FROM agent_analyses WHERE ticker = ? AND agent_role NOT IN ({placeholders})",
+        (ticker, *research_roles)
+    ).fetchone()["c"]
+    research_count = conn.execute(
+        f"SELECT COUNT(*) as c FROM agent_analyses WHERE ticker = ? AND agent_role IN ({placeholders})",
+        (ticker, *research_roles)
+    ).fetchone()["c"]
+
+    # Find the scan_id that has the most agent analyses (the "best" scan)
+    best_scan = conn.execute(
+        "SELECT scan_id, COUNT(*) as c FROM agent_analyses WHERE ticker = ? GROUP BY scan_id ORDER BY c DESC LIMIT 1",
+        (ticker,)
+    ).fetchone()
+    best_scan_id = best_scan["scan_id"] if best_scan else latest_scan_id
+
+    # Quant
+    has_quant = conn.execute(
+        "SELECT COUNT(*) as c FROM quant_predictions WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"] > 0
+
+    # Report
+    has_report = conn.execute(
+        "SELECT COUNT(*) as c FROM aggregated_reports WHERE ticker = ?", (ticker,)
+    ).fetchone()["c"] > 0
+
+    conn.close()
+
+    return {
+        "ticker": ticker,
+        "scan_id": latest_scan_id,
+        "best_scan_id": best_scan_id,
+        "has_scan": latest_scan_id is not None,
+        "agent_count": base_count,
+        "research_count": research_count,
+        "has_quant": has_quant,
+        "has_report": has_report,
+    }
+
+
+def get_completeness_all():
+    """Check completeness for all tickers that have scan results."""
+    conn = get_connection()
+    tickers = [r["ticker"] for r in conn.execute(
+        "SELECT DISTINCT ticker FROM scan_results ORDER BY ticker"
+    ).fetchall()]
+    conn.close()
+    return {t: get_completeness_for_ticker(t) for t in tickers}
+
+
+def get_scan_result_by_id(scan_id):
+    """Fetch a single scan result by its ID."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM scan_results WHERE id = ?", (scan_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_latest_scan_for_ticker(ticker):
+    """Fetch the latest scan result for a ticker."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM scan_results WHERE ticker = ? ORDER BY scan_timestamp DESC LIMIT 1",
+        (ticker,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None

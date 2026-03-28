@@ -11,7 +11,7 @@ from rich.console import Console
 from quant.valuation import compute_all_valuations
 from quant.levels import compute_support_resistance
 from quant.predictions import compute_all_predictions
-from scanner.metrics import _fetch_stock_data  # Reuse scanner's fetch with retry + fallback
+from scanner.metrics import _fetch_stock_data, enrich_fundamentals  # Reuse scanner's fetch + enrichment
 
 console = Console()
 
@@ -52,6 +52,7 @@ def run_quant_engine(ticker: str) -> dict:
     """
     Run all quantitative models for a single stock.
     Uses scanner's _fetch_stock_data which has retry + Yahoo/Google fallback.
+    If fundamental data is missing, enriches via yfinance financials.
     """
     # Check cache
     cached = _load_cache(ticker)
@@ -68,6 +69,9 @@ def run_quant_engine(ticker: str) -> dict:
         if hist.empty or len(hist) < 50:
             result["error"] = "Insufficient historical data"
             return result
+
+        # Enrich fundamentals if missing (critical for valuations)
+        info = enrich_fundamentals(ticker, info)
 
         current_price = float(hist["Close"].iloc[-1])
 

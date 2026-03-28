@@ -135,10 +135,25 @@ def _fetch_yahoo_direct(ticker: str) -> tuple:
                     info["revenueGrowth"] = fin.get("revenueGrowth", {}).get("raw")
                     info["earningsGrowth"] = fin.get("earningsGrowth", {}).get("raw")
                     info["freeCashflow"] = fin.get("freeCashflow", {}).get("raw")
+                    info["operatingCashflow"] = fin.get("operatingCashflows", {}).get("raw")
+                    info["totalRevenue"] = fin.get("totalRevenue", {}).get("raw")
                     info["recommendationMean"] = fin.get("recommendationMean", {}).get("raw")
 
                     summary = modules.get("summaryDetail", {})
                     info["marketCap"] = summary.get("marketCap", {}).get("raw", info.get("marketCap", 0))
+                    info["trailingPE"] = info.get("trailingPE") or summary.get("trailingPE", {}).get("raw")
+                    info["dividendYield"] = summary.get("dividendYield", {}).get("raw")
+                    info["payoutRatio"] = summary.get("payoutRatio", {}).get("raw")
+
+                    # Quant-critical fields from defaultKeyStatistics
+                    info["trailingEps"] = stats.get("trailingEps", {}).get("raw")
+                    info["forwardEps"] = stats.get("forwardEps", {}).get("raw")
+                    info["bookValue"] = stats.get("bookValue", {}).get("raw")
+                    info["sharesOutstanding"] = stats.get("sharesOutstanding", {}).get("raw")
+                    info["earningsQuarterlyGrowth"] = stats.get("earningsQuarterlyGrowth", {}).get("raw")
+                    info["netIncomeToCommon"] = stats.get("netIncomeToCommon", {}).get("raw")
+                    info["enterpriseValue"] = stats.get("enterpriseValue", {}).get("raw")
+
                     break  # Got fundamentals, stop trying
             except Exception:
                 continue
@@ -301,10 +316,144 @@ def _save_raw_cache(path: str, hist, info: dict):
         pass  # Non-critical
 
 
+def enrich_fundamentals(ticker: str, info: dict) -> dict:
+    """
+    If critical fundamental fields are missing from the info dict, try fetching
+    them via yfinance financials (balance sheet, income stmt, cash flow).
+    This ensures valuation metrics (P/E, P/B, D/E, revenue growth, etc.) are populated
+    even when yfinance's .info endpoint returns minimal data.
+    """
+    critical_fields = ["trailingEps", "forwardEps", "bookValue", "freeCashflow", "sharesOutstanding"]
+    has_any = any(info.get(f) for f in critical_fields)
+    if has_any:
+        return info  # Already have data
+
+    print(f"  [{ticker}] Fundamental data missing — enriching from yfinance financials...")
+
+    try:
+        stock = yf.Ticker(ticker)
+        yf_info = {}
+
+        # First try stock.info (may fail due to rate limits)
+        try:
+            yf_info = stock.info or {}
+        except Exception:
+            pass  # Rate limited or unavailable
+
+        if yf_info and len(yf_info) > 5:
+            # Good data from .info — merge missing fields
+            for field in ["trailingEps", "forwardEps", "bookValue", "freeCashflow",
+                          "sharesOutstanding", "earningsGrowth", "earningsQuarterlyGrowth",
+                          "revenueGrowth", "totalRevenue", "netIncomeToCommon",
+                          "operatingCashflow", "totalDebt", "totalCash",
+                          "dividendYield", "payoutRatio", "debtToEquity",
+                          "trailingPE", "forwardPE", "priceToBook",
+                          "sector", "industry"]:
+                if not info.get(field) and yf_info.get(field):
+                    info[field] = yf_info[field]
+            return info
+
+        # Fallback: pull from financial statements directly
+        try:
+            bs = stock.quarterly_balance_sheet
+            inc = stock.quarterly_income_stmt
+            cf = stock.quarterly_cashflow
+
+            shares = info.get("sharesOutstanding") or (yf_info.get("sharesOutstanding") if yf_info else None)
+
+            if inc is not None and not inc.empty:
+                # EPS from income statement
+                for label in ["Net Income", "Net Income Common Stockholders"]:
+                    if label in inc.index and len(inc.columns) >= 4:
+                        annual_ni = float(inc.loc[label].iloc[:4].sum())
+                        if shares and shares > 0:
+                            info["trailingEps"] = round(annual_ni / shares, 2)
+                        info["netIncomeToCommon"] = annual_ni
+                        break
+
+                # Revenue + growth
+                for label in ["Total Revenue", "Revenue"]:
+                    if label in inc.index:
+                        info["totalRevenue"] = float(inc.loc[label].iloc[0])
+                        if len(inc.columns) >= 5:
+                            recent = float(inc.loc[label].iloc[:4].sum())
+                            older = float(inc.loc[label].iloc[4:8].sum())
+                            if older > 0:
+                                info["revenueGrowth"] = round((recent - older) / older, 4)
+                        break
+
+                # Earnings growth
+                for label in ["Net Income", "Net Income Common Stockholders"]:
+                    if label in inc.index and len(inc.columns) >= 5:
+                        recent = float(inc.loc[label].iloc[:4].sum())
+                        older = float(inc.loc[label].iloc[4:8].sum())
+                        if older > 0:
+                            info["earningsGrowth"] = round((recent - older) / older, 4)
+                        break
+
+            if bs is not None and not bs.empty:
+                # Book value per share
+                for label in ["Total Stockholder Equity", "Stockholders Equity",
+                              "Total Equity Gross Minority Interest"]:
+                    if label in bs.index:
+                        equity = float(bs.loc[label].iloc[0])
+                        if shares and shares > 0:
+                            info["bookValue"] = round(equity / shares, 2)
+                            # Price to book
+                            price = info.get("regularMarketPrice", 0)
+                            if price and info["bookValue"] > 0:
+                                info["priceToBook"] = round(price / info["bookValue"], 2)
+                        break
+
+                # Debt to equity
+                for debt_label in ["Total Debt", "Long Term Debt"]:
+                    if debt_label in bs.index:
+                        debt = float(bs.loc[debt_label].iloc[0])
+                        info["totalDebt"] = debt
+                        for eq_label in ["Total Stockholder Equity", "Stockholders Equity",
+                                         "Total Equity Gross Minority Interest"]:
+                            if eq_label in bs.index:
+                                eq = float(bs.loc[eq_label].iloc[0])
+                                if eq > 0:
+                                    info["debtToEquity"] = round((debt / eq) * 100, 2)
+                                break
+                        break
+
+            if cf is not None and not cf.empty:
+                opcf = None
+                capex = None
+                for label in ["Operating Cash Flow", "Cash Flow From Continuing Operating Activities"]:
+                    if label in cf.index:
+                        opcf = float(cf.loc[label].iloc[0])
+                        break
+                for label in ["Capital Expenditure", "Capital Expenditures"]:
+                    if label in cf.index:
+                        capex = float(cf.loc[label].iloc[0])
+                        break
+                if opcf:
+                    info["operatingCashflow"] = opcf
+                    info["freeCashflow"] = opcf + capex if capex else opcf * 0.7
+
+            # Compute P/E if we got EPS
+            eps = info.get("trailingEps")
+            price = info.get("regularMarketPrice", 0)
+            if eps and eps > 0 and price and price > 0:
+                info["trailingPE"] = round(price / eps, 2)
+
+        except Exception as e:
+            print(f"  [{ticker}] Financial statement enrichment failed: {e}")
+
+    except Exception as e:
+        print(f"  [{ticker}] yfinance enrichment failed: {e}")
+
+    return info
+
+
 def compute_all_metrics(ticker: str) -> Optional[dict]:
     """
     Compute all 32+ metrics for a given ticker.
     Uses local cache, yfinance with retry, and direct Yahoo API fallback.
+    Enriches fundamentals from yfinance financials if missing.
     Returns None if data is insufficient.
     """
     # Check cache first
@@ -318,6 +467,9 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
 
         if hist.empty or len(hist) < 50:
             return None
+
+        # Enrich fundamentals if yfinance returned minimal data
+        info = enrich_fundamentals(ticker, info)
 
         close = hist["Close"]
         volume = hist["Volume"]
@@ -395,7 +547,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         metrics["relative_volume"] = (avg_vol_5 / avg_volume_20) if avg_volume_20 > 0 else 1
 
         # 11. Volume-Price Trend
-        vpt = ((close.pct_change() * volume).cumsum())
+        vpt = ((close.ffill().pct_change() * volume).cumsum())
         metrics["volume_price_trend"] = vpt.iloc[-1] / vpt.abs().max() if vpt.abs().max() > 0 else 0
 
         # 12. Accumulation/Distribution
@@ -414,7 +566,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         # VOLATILITY (4 metrics)
         # ══════════════════════════════════════════════════════════════════════
 
-        returns = close.pct_change().dropna()
+        returns = close.ffill().pct_change().dropna()
 
         # 14. Historical volatility (annualized)
         metrics["historical_volatility"] = returns.tail(30).std() * np.sqrt(252) * 100
