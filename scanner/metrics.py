@@ -1,6 +1,7 @@
 """
 Computes 32+ metrics for each stock to identify standout opportunities.
 Primary: yfinance. Fallback: Yahoo Finance direct API via requests.
+Mutual funds: mftool (AMFI NAV data).
 Caches data locally to avoid redundant downloads.
 """
 
@@ -214,6 +215,59 @@ def _fetch_google_finance(ticker: str) -> tuple:
     }
 
     print(f"[GoogleFinance] {ticker}: ₹{current_price:.2f}")
+    return hist, info
+
+
+def _fetch_mf_data(ticker: str) -> tuple:
+    """
+    Fetch mutual fund NAV data via mftool.
+    Returns (hist_df, info_dict) in the same format as stock data.
+    """
+    from scanner.universe import get_mf_scheme_code, get_mutual_fund_info
+    from mftool import Mftool
+
+    scheme_code = get_mf_scheme_code(ticker)
+    mf_info = get_mutual_fund_info(ticker)
+    mf = Mftool()
+
+    # Get NAV history
+    df = mf.get_scheme_historical_nav(scheme_code, as_Dataframe=True)
+    if df is None or df.empty:
+        raise RuntimeError(f"No NAV data for scheme {scheme_code}")
+
+    # Convert: mftool returns nav as string, index as DD-MM-YYYY strings
+    df["nav"] = pd.to_numeric(df["nav"], errors="coerce")
+    df.index = pd.to_datetime(df.index, format="%d-%m-%Y")
+    df = df.sort_index()
+
+    # Keep only last 1 year
+    one_year_ago = df.index.max() - pd.Timedelta(days=365)
+    df = df[df.index >= one_year_ago]
+
+    # Build a hist DataFrame matching yfinance format (NAV-based, no volume)
+    hist = pd.DataFrame({
+        "Open": df["nav"],
+        "High": df["nav"],
+        "Low": df["nav"],
+        "Close": df["nav"],
+        "Volume": 0,
+    }, index=df.index)
+
+    # Get scheme details
+    details = mf.get_scheme_details(scheme_code)
+
+    info = {
+        "shortName": mf_info.get("name", details.get("scheme_name", ticker)),
+        "regularMarketPrice": float(df["nav"].iloc[-1]),
+        "sector": mf_info.get("category", details.get("scheme_category", "Mutual Fund")),
+        "industry": mf_info.get("amc", details.get("fund_house", "Unknown")),
+        "marketCap": 0,
+        "scheme_category": details.get("scheme_category", ""),
+        "fund_house": details.get("fund_house", ""),
+        "scheme_name": details.get("scheme_name", ""),
+    }
+
+    print(f"[mftool] {ticker}: NAV Rs.{info['regularMarketPrice']:.2f} ({len(hist)} days)")
     return hist, info
 
 
@@ -463,7 +517,11 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         return cached
 
     try:
-        hist, info = _fetch_stock_data(ticker)
+        from scanner.universe import is_mutual_fund as _check_mf
+        if _check_mf(ticker):
+            hist, info = _fetch_mf_data(ticker)
+        else:
+            hist, info = _fetch_stock_data(ticker)
 
         if hist.empty or len(hist) < 50:
             return None
@@ -641,12 +699,13 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         metrics["rate_of_change"] = ((close.iloc[-1] / close.iloc[-10]) - 1) * 100 if len(close) >= 10 else 0
 
         # ══════════════════════════════════════════════════════════════════════
-        # FUNDAMENTALS (6 metrics) — skip for commodities
+        # FUNDAMENTALS (6 metrics) — skip for commodities and mutual funds
         # ══════════════════════════════════════════════════════════════════════
-        from scanner.universe import is_commodity as _is_commodity
+        from scanner.universe import is_commodity as _is_commodity, is_mutual_fund as _is_mf
         _is_comm = _is_commodity(ticker)
+        _is_mutual_fund = _is_mf(ticker)
 
-        if _is_comm:
+        if _is_comm or _is_mutual_fund:
             # Commodities don't have P/E, P/B, D/E, revenue, earnings, FCF
             metrics["pe_ratio_vs_sector"] = 0
             metrics["pb_ratio"] = 0
@@ -654,7 +713,10 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
             metrics["revenue_growth"] = 0
             metrics["earnings_surprise"] = 0
             metrics["free_cash_flow_yield"] = 0
-            reasons.append(f"Commodity asset - fundamentals N/A, focus on supply/demand & technicals")
+            if _is_mutual_fund:
+                reasons.append("Mutual fund - use NAV/returns metrics instead of company fundamentals")
+            else:
+                reasons.append("Commodity asset - fundamentals N/A, focus on supply/demand & technicals")
         else:
             # 23. P/E ratio vs sector average (simplified: just raw PE)
             pe = info.get("trailingPE") or info.get("forwardPE")
@@ -720,19 +782,29 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         # METADATA
         # ══════════════════════════════════════════════════════════════════════
 
-        # Set metadata — use commodity info if applicable
+        # Set metadata — use commodity/MF info if applicable
         if _is_comm:
             from scanner.universe import get_commodity_info
             _comm_info = get_commodity_info(ticker)
             _company_name = _comm_info.get("name", info.get("shortName", ticker))
             _sector = _comm_info.get("category", "Commodities")
             _industry = f"{_comm_info.get('exchange', '')} Futures"
-            _market_cap = 0  # Commodities don't have market cap
+            _market_cap = 0
+            _asset_type = "commodity"
+        elif _is_mutual_fund:
+            from scanner.universe import get_mutual_fund_info
+            _mf_info = get_mutual_fund_info(ticker)
+            _company_name = _mf_info.get("name", ticker)
+            _sector = _mf_info.get("category", "Mutual Fund")
+            _industry = _mf_info.get("amc", "Unknown AMC")
+            _market_cap = 0
+            _asset_type = "mutual_fund"
         else:
             _company_name = info.get("shortName", ticker)
             _sector = info.get("sector", "Unknown")
             _industry = info.get("industry", "Unknown")
             _market_cap = info.get("marketCap", 0)
+            _asset_type = "stock"
 
         result = {
             "ticker": ticker,
@@ -743,7 +815,7 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
             "current_price": float(latest_close),
             "metrics": {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in metrics.items()},
             "standout_reasons": reasons,
-            "asset_type": "commodity" if _is_comm else "stock",
+            "asset_type": _asset_type,
         }
 
         # Cache for re-runs

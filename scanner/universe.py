@@ -117,6 +117,71 @@ def get_commodity_info(ticker: str) -> dict:
     return COMMODITY_INFO.get(ticker, {"name": ticker, "category": "Unknown", "exchange": "Unknown", "currency": "USD"})
 
 
+# ── Mutual Funds (Indian, via mftool AMFI scheme codes) ──────────────────────
+# Top Direct-Growth schemes by AUM/popularity
+MUTUAL_FUNDS = [
+    "MF:118955",  # HDFC Flexi Cap Fund
+    "MF:119598",  # SBI Blue Chip (Large Cap)
+    "MF:120586",  # ICICI Prudential Bluechip Fund
+    "MF:122639",  # Parag Parikh Flexi Cap Fund
+    "MF:118825",  # Mirae Asset Large Cap Fund
+    "MF:125497",  # SBI Small Cap Fund
+    "MF:118778",  # Nippon India Small Cap Fund
+    "MF:120164",  # Kotak Small Cap Fund
+    "MF:125354",  # Axis Small Cap Fund
+    "MF:120828",  # Quant Small Cap Fund
+    "MF:118989",  # HDFC Mid Cap Fund
+    "MF:119071",  # DSP Midcap Fund
+    "MF:127042",  # Motilal Oswal Midcap Fund
+    "MF:120505",  # Axis Midcap Fund
+    "MF:120166",  # Kotak Flexicap Fund
+    "MF:119609",  # SBI Equity Hybrid Fund
+    "MF:145206",  # Tata Small Cap Fund
+    "MF:147946",  # Bandhan Small Cap Fund
+    "MF:119835",  # SBI Contra Fund
+    "MF:118825",  # Mirae Asset Large Cap Fund
+]
+# Deduplicate
+MUTUAL_FUNDS = sorted(set(MUTUAL_FUNDS))
+
+MUTUAL_FUND_INFO = {
+    "MF:118955": {"name": "HDFC Flexi Cap Fund", "category": "Flexi Cap", "amc": "HDFC Mutual Fund", "scheme_code": "118955"},
+    "MF:119598": {"name": "SBI Blue Chip Fund", "category": "Large Cap", "amc": "SBI Mutual Fund", "scheme_code": "119598"},
+    "MF:120586": {"name": "ICICI Prudential Bluechip Fund", "category": "Large Cap", "amc": "ICICI Prudential", "scheme_code": "120586"},
+    "MF:122639": {"name": "Parag Parikh Flexi Cap Fund", "category": "Flexi Cap", "amc": "PPFAS Mutual Fund", "scheme_code": "122639"},
+    "MF:118825": {"name": "Mirae Asset Large Cap Fund", "category": "Large Cap", "amc": "Mirae Asset", "scheme_code": "118825"},
+    "MF:125497": {"name": "SBI Small Cap Fund", "category": "Small Cap", "amc": "SBI Mutual Fund", "scheme_code": "125497"},
+    "MF:118778": {"name": "Nippon India Small Cap Fund", "category": "Small Cap", "amc": "Nippon India", "scheme_code": "118778"},
+    "MF:120164": {"name": "Kotak Small Cap Fund", "category": "Small Cap", "amc": "Kotak Mahindra", "scheme_code": "120164"},
+    "MF:125354": {"name": "Axis Small Cap Fund", "category": "Small Cap", "amc": "Axis Mutual Fund", "scheme_code": "125354"},
+    "MF:120828": {"name": "Quant Small Cap Fund", "category": "Small Cap", "amc": "Quant Mutual Fund", "scheme_code": "120828"},
+    "MF:118989": {"name": "HDFC Mid Cap Fund", "category": "Mid Cap", "amc": "HDFC Mutual Fund", "scheme_code": "118989"},
+    "MF:119071": {"name": "DSP Midcap Fund", "category": "Mid Cap", "amc": "DSP Mutual Fund", "scheme_code": "119071"},
+    "MF:127042": {"name": "Motilal Oswal Midcap Fund", "category": "Mid Cap", "amc": "Motilal Oswal", "scheme_code": "127042"},
+    "MF:120505": {"name": "Axis Midcap Fund", "category": "Mid Cap", "amc": "Axis Mutual Fund", "scheme_code": "120505"},
+    "MF:120166": {"name": "Kotak Flexicap Fund", "category": "Flexi Cap", "amc": "Kotak Mahindra", "scheme_code": "120166"},
+    "MF:119609": {"name": "SBI Equity Hybrid Fund", "category": "Hybrid", "amc": "SBI Mutual Fund", "scheme_code": "119609"},
+    "MF:145206": {"name": "Tata Small Cap Fund", "category": "Small Cap", "amc": "Tata Mutual Fund", "scheme_code": "145206"},
+    "MF:147946": {"name": "Bandhan Small Cap Fund", "category": "Small Cap", "amc": "Bandhan Mutual Fund", "scheme_code": "147946"},
+    "MF:119835": {"name": "SBI Contra Fund", "category": "Contra", "amc": "SBI Mutual Fund", "scheme_code": "119835"},
+}
+
+def is_mutual_fund(ticker: str) -> bool:
+    """Check if a ticker is a mutual fund (MF:scheme_code format)."""
+    return ticker.startswith("MF:") or ticker in MUTUAL_FUNDS or ticker in MUTUAL_FUND_INFO
+
+def get_mutual_fund_info(ticker: str) -> dict:
+    """Get mutual fund metadata."""
+    return MUTUAL_FUND_INFO.get(ticker, {"name": ticker, "category": "Unknown", "amc": "Unknown", "scheme_code": ticker.replace("MF:", "")})
+
+def get_mf_scheme_code(ticker: str) -> str:
+    """Extract AMFI scheme code from MF ticker."""
+    info = MUTUAL_FUND_INFO.get(ticker)
+    if info:
+        return info["scheme_code"]
+    return ticker.replace("MF:", "")
+
+
 def _add_suffix(tickers: list) -> list:
     """Add .NS suffix for yfinance NSE lookup."""
     return [f"{t}{EXCHANGE_SUFFIX}" for t in tickers]

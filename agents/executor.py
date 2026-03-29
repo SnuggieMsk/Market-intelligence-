@@ -18,16 +18,18 @@ console = Console()
 
 
 def build_stock_context(stock: dict) -> str:
-    """Build a detailed context string about the stock/commodity for agents to analyze."""
-    from scanner.universe import is_commodity, get_commodity_info
+    """Build a detailed context string about the stock/commodity/mutual fund for agents to analyze."""
+    from scanner.universe import is_commodity, get_commodity_info, is_mutual_fund
 
     metrics = stock.get("metrics", {})
     reasons = stock.get("standout_reasons", [])
     ticker = stock["ticker"]
 
-    # Detect if this is a commodity
+    # Detect asset type and route to appropriate context builder
     if is_commodity(ticker):
         return _build_commodity_context(stock, metrics, reasons)
+    if is_mutual_fund(ticker):
+        return _build_mutual_fund_context(stock, metrics, reasons)
 
     context = f"""
 === STOCK ANALYSIS REQUEST ===
@@ -170,6 +172,77 @@ KEY FACTORS TO CONSIDER:
 
 NOTE: Fundamental metrics (P/E, P/B, D/E, revenue, earnings, FCF) are NOT applicable.
 Focus on: technicals, supply-demand, macro drivers, positioning, and seasonal patterns.
+"""
+    return context
+
+
+def _build_mutual_fund_context(stock: dict, metrics: dict, reasons: list) -> str:
+    """Build context string specifically for mutual fund analysis."""
+    from scanner.universe import get_mutual_fund_info
+
+    ticker = stock["ticker"]
+    mf_info = get_mutual_fund_info(ticker)
+
+    # Compute NAV-based returns from metrics
+    daily_ret = metrics.get('daily_return', 0)
+    weekly_ret = metrics.get('weekly_return', 0)
+    monthly_ret = metrics.get('monthly_return', 0)
+
+    context = f"""
+=== MUTUAL FUND ANALYSIS REQUEST ===
+
+Fund Name: {mf_info.get('name', ticker)}
+Scheme Code: {mf_info.get('scheme_code', ticker)}
+Category: {mf_info.get('category', 'Unknown')}
+AMC (Fund House): {mf_info.get('amc', 'Unknown')}
+Current NAV: Rs.{stock.get('current_price', 0):,.2f}
+Plan: Direct Growth
+Asset Type: MUTUAL FUND (Not a stock — analyze NAV performance, not company fundamentals)
+
+=== WHY THIS FUND STANDS OUT ===
+{chr(10).join(f'  - {r}' for r in reasons) if reasons else '  - Significant NAV movement or trend detected'}
+
+=== NAV PERFORMANCE METRICS ===
+
+NAV TREND:
+  - NAV vs 52-week low: {metrics.get('price_vs_52w_low', 0):.1f}% above
+  - NAV vs 52-week high: {metrics.get('price_vs_52w_high', 0):.1f}% below
+  - Daily NAV change: {daily_ret:+.2f}%
+  - Weekly NAV change: {weekly_ret:+.2f}%
+  - Monthly NAV change: {monthly_ret:+.2f}%
+  - NAV vs 200-day avg: {metrics.get('price_vs_sma200', 0):+.2f}%
+
+VOLATILITY & RISK:
+  - Historical volatility (ann.): {metrics.get('historical_volatility', 0):.1f}%
+  - ATR as % of NAV: {metrics.get('atr_percentage', 0):.2f}%
+  - Bollinger bandwidth: {metrics.get('bollinger_squeeze', 0):.1f}%
+
+MOMENTUM:
+  - RSI (14): {metrics.get('rsi', 50):.1f}
+  - MACD: {'Bullish' if metrics.get('macd_signal', 0) > 0 else 'Bearish'}
+  - Stochastic: {'Bullish crossover' if metrics.get('stochastic_crossover', 0) > 0 else 'Bearish crossover'}
+  - Momentum score: {metrics.get('momentum_score', 5):.1f}/10
+  - Rate of change (10d): {metrics.get('rate_of_change', 0):+.2f}%
+
+=== MUTUAL FUND-SPECIFIC ANALYSIS CONTEXT ===
+(Use your domain knowledge for the following — data above is NAV-based technicals only)
+
+KEY FACTORS TO EVALUATE:
+  - Category: {mf_info.get('category', 'Unknown')} — compare vs category average returns
+  - Fund house reputation and AUM stability ({mf_info.get('amc', 'Unknown')})
+  - Expense ratio impact on long-term returns (Direct plan = lower cost)
+  - Fund manager tenure and consistency of alpha generation
+  - Portfolio concentration risk (top 10 holdings weight)
+  - Market cap allocation (large/mid/small split)
+  - SIP suitability — is this a good SIP candidate given NAV volatility?
+  - Benchmark tracking — how much alpha vs the index?
+  - Drawdown history — how did the fund handle 2020 COVID crash and 2022 correction?
+  - India-specific: SEBI category norms, ELSS tax benefits if applicable
+
+NOTE: Company fundamentals (P/E, P/B, D/E, revenue, earnings) are NOT applicable to the fund itself.
+These metrics apply to the fund's UNDERLYING holdings, not the fund.
+Focus on: NAV performance, risk-adjusted returns, fund management, cost efficiency, and SIP suitability.
+Verdicts should be: INVEST (strong), BUY (good), NEUTRAL (hold/watch), SELL (exit), AVOID (stay away).
 """
     return context
 

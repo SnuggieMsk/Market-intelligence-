@@ -18,7 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scanner.universe import NIFTY_50, SENSEX_30, NIFTY_NEXT_50, EXTRA_WATCHLIST, COMMODITIES, COMMODITY_INFO, is_commodity
+from scanner.universe import NIFTY_50, SENSEX_30, NIFTY_NEXT_50, EXTRA_WATCHLIST, COMMODITIES, COMMODITY_INFO, is_commodity, MUTUAL_FUNDS, MUTUAL_FUND_INFO, is_mutual_fund
 from research.research_agents import RESEARCH_AGENT_COUNT
 
 from data.database import (
@@ -1461,7 +1461,7 @@ elif page == "Analyze Anything":
     _is_read_only = os.environ.get("SHARE_READ_ONLY", "") == "1" or not _has_api_keys
 
     st.markdown('<p class="hero-text">Analyze Anything</p>', unsafe_allow_html=True)
-    st.markdown('<p class="hero-sub">STOCKS | COMMODITIES | ETFs — 42 AI AGENTS + QUANT MODELS</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">STOCKS | COMMODITIES | MUTUAL FUNDS — 47 AI AGENTS + QUANT MODELS</p>', unsafe_allow_html=True)
 
     if _is_read_only:
         st.info(
@@ -1472,24 +1472,28 @@ elif page == "Analyze Anything":
 
     st.markdown("")
 
-    # Build predictive dropdown: stocks + commodities
+    # Build predictive dropdown: stocks + commodities + mutual funds
     _stock_tickers = sorted(set(NIFTY_50 + SENSEX_30 + NIFTY_NEXT_50 + EXTRA_WATCHLIST))
     _commodity_tickers = sorted(COMMODITIES)
-    _all_tickers_raw = _stock_tickers + ["--- COMMODITIES ---"] + _commodity_tickers
+    _mf_tickers = sorted(MUTUAL_FUNDS)
+    _all_tickers_raw = _stock_tickers + ["--- COMMODITIES ---"] + _commodity_tickers + ["--- MUTUAL FUNDS ---"] + _mf_tickers
     _ticker_options = [""] + _all_tickers_raw
 
     def _format_ticker(x):
         if x == "":
-            return "Type to search (e.g. RELIANCE, TCS, GC=F for Gold)..."
-        if x == "--- COMMODITIES ---":
-            return "--- COMMODITIES ---"
+            return "Type to search (e.g. RELIANCE, GOLD, SBI SMALL CAP)..."
+        if x.startswith("--- "):
+            return x
         if x in COMMODITY_INFO:
             info = COMMODITY_INFO[x]
             return f"{x} - {info['name']} ({info['category']})"
+        if x in MUTUAL_FUND_INFO:
+            info = MUTUAL_FUND_INFO[x]
+            return f"{info['name']} ({info['category']}) - {info['amc']}"
         return x
 
     ticker_select = st.selectbox(
-        "Search stocks & commodities (type to filter)",
+        "Search stocks, commodities & mutual funds (type to filter)",
         options=_ticker_options,
         index=0,
         format_func=_format_ticker,
@@ -1498,13 +1502,14 @@ elif page == "Analyze Anything":
 
     # Also allow manual entry
     custom_ticker = st.text_input(
-        "Or type any name — GOLD, CRUDE, SILVER, RELIANCE, TCS...",
-        placeholder="e.g. GOLD, CRUDE, TCS, NEWIPO",
+        "Or type any name — GOLD, CRUDE, SBI SMALL CAP, HDFC FLEXI CAP...",
+        placeholder="e.g. GOLD, CRUDE, TCS, SBI SMALL CAP, HDFC MID CAP",
         key="custom_ticker_input",
     )
 
     # Common name -> ticker mapping for user-friendly input
-    _COMMODITY_ALIASES = {
+    _ASSET_ALIASES = {
+        # Commodities
         "GOLD": "GC=F", "SILVER": "SI=F", "PLATINUM": "PL=F",
         "CRUDE": "CL=F", "CRUDEOIL": "CL=F", "OIL": "CL=F", "WTI": "CL=F",
         "BRENT": "BZ=F", "NATURALGAS": "NG=F", "GAS": "NG=F", "NATGAS": "NG=F",
@@ -1512,22 +1517,46 @@ elif page == "Analyze Anything":
         "CORN": "ZC=F", "WHEAT": "ZW=F", "SOYBEAN": "ZS=F", "SOYBEANS": "ZS=F",
         "COTTON": "CT=F", "COFFEE": "KC=F", "SUGAR": "SB=F",
         "GOLDETF": "GOLDBEES.NS", "SILVERETF": "SILVERBEES.NS",
+        # Mutual Funds — common name aliases
+        "SBI SMALL CAP": "MF:125497", "SBI SMALLCAP": "MF:125497",
+        "SBI BLUE CHIP": "MF:119598", "SBI BLUECHIP": "MF:119598", "SBI LARGE CAP": "MF:119598",
+        "SBI CONTRA": "MF:119835",
+        "SBI EQUITY HYBRID": "MF:119609",
+        "HDFC FLEXI CAP": "MF:118955", "HDFC FLEXICAP": "MF:118955",
+        "HDFC MID CAP": "MF:118989", "HDFC MIDCAP": "MF:118989",
+        "ICICI BLUECHIP": "MF:120586", "ICICI LARGE CAP": "MF:120586", "ICICI PRUDENTIAL BLUECHIP": "MF:120586",
+        "PARAG PARIKH": "MF:122639", "PPFAS": "MF:122639", "PARAG PARIKH FLEXI CAP": "MF:122639",
+        "MIRAE LARGE CAP": "MF:118825", "MIRAE ASSET LARGE CAP": "MF:118825",
+        "NIPPON SMALL CAP": "MF:118778", "NIPPON INDIA SMALL CAP": "MF:118778",
+        "KOTAK SMALL CAP": "MF:120164",
+        "KOTAK FLEXICAP": "MF:120166", "KOTAK FLEXI CAP": "MF:120166",
+        "AXIS SMALL CAP": "MF:125354",
+        "AXIS MIDCAP": "MF:120505", "AXIS MID CAP": "MF:120505",
+        "QUANT SMALL CAP": "MF:120828",
+        "DSP MIDCAP": "MF:119071", "DSP MID CAP": "MF:119071",
+        "MOTILAL OSWAL MIDCAP": "MF:127042",
+        "TATA SMALL CAP": "MF:145206",
+        "BANDHAN SMALL CAP": "MF:147946",
     }
 
     # Determine final ticker
     raw_input = custom_ticker.strip().upper() if custom_ticker.strip() else ticker_select
-    if raw_input == "--- COMMODITIES ---":
+    if raw_input and raw_input.startswith("--- "):
         raw_input = ""
     ticker_input = raw_input
 
     if ticker_input:
         ticker = ticker_input.strip().upper()
-        # Check commodity aliases first (GOLD -> GC=F, CRUDE -> CL=F, etc.)
-        if ticker in _COMMODITY_ALIASES:
-            ticker = _COMMODITY_ALIASES[ticker]
-            st.info(f"Mapped to commodity ticker: **{ticker}** ({COMMODITY_INFO.get(ticker, {}).get('name', '')})")
-        # Don't add .NS suffix for commodities (futures tickers like GC=F, CL=F)
-        elif not is_commodity(ticker) and not ticker.endswith(".NS") and not ticker.endswith(".BO") and "=" not in ticker:
+        # Check aliases first (GOLD -> GC=F, SBI SMALL CAP -> MF:125497, etc.)
+        if ticker in _ASSET_ALIASES:
+            ticker = _ASSET_ALIASES[ticker]
+            if ticker.startswith("MF:"):
+                mf_name = MUTUAL_FUND_INFO.get(ticker, {}).get('name', '')
+                st.info(f"Mapped to mutual fund: **{mf_name}** ({ticker})")
+            else:
+                st.info(f"Mapped to commodity ticker: **{ticker}** ({COMMODITY_INFO.get(ticker, {}).get('name', '')})")
+        # Don't add .NS suffix for commodities, MFs, or tickers with special chars
+        elif not is_commodity(ticker) and not is_mutual_fund(ticker) and not ticker.endswith(".NS") and not ticker.endswith(".BO") and "=" not in ticker and not ticker.startswith("MF:"):
             ticker = f"{ticker}.NS"
 
         # Check if we already have data
@@ -1633,9 +1662,9 @@ elif page == "Analyze Anything":
     else:
         st.markdown("""
         **How it works:**
-        1. Search for any **stock** (RELIANCE, TCS) or **commodity** (GOLD, CRUDE, SILVER) from the dropdown
-        2. Or just type the name — common names like GOLD, CRUDE, SILVER auto-map to the right ticker
-        3. Click 'Run Full Analysis' — 42 AI agents + 11 research agents + quant models analyze it
+        1. Search for any **stock** (RELIANCE, TCS), **commodity** (GOLD, CRUDE), or **mutual fund** (SBI SMALL CAP, HDFC FLEXI CAP)
+        2. Or just type the name — common names auto-map to the right ticker
+        3. Click 'Run Full Analysis' — 47 AI agents + 11 research agents + quant models analyze it
         4. Watch each step complete in real-time (you can stop anytime)
         5. View the **Agent Debate** — see where agents disagree most sharply
         6. Browse results in Stock Deep Dive, Agent Reports, or Quant Predictions
