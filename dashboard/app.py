@@ -18,7 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scanner.universe import NIFTY_50, SENSEX_30, NIFTY_NEXT_50, EXTRA_WATCHLIST
+from scanner.universe import NIFTY_50, SENSEX_30, NIFTY_NEXT_50, EXTRA_WATCHLIST, COMMODITIES, COMMODITY_INFO, is_commodity
 from research.research_agents import RESEARCH_AGENT_COUNT
 
 from data.database import (
@@ -924,6 +924,50 @@ elif page == "Agent Reports":
         if full.get("time_horizon"):
             st.markdown(f"**Time Horizon:** {full['time_horizon']}")
 
+        # ── Agent Debate Section ──────────────────────────────────────────
+        debate = full.get("debate", {})
+        if debate and isinstance(debate, dict) and len(debate) > 1:
+            st.markdown("---")
+            st.markdown("### Agent Debate")
+            st.caption("Where the AI agents disagree most strongly")
+
+            # Show debate topics
+            for key, topic_data in debate.items():
+                if not isinstance(topic_data, dict) or "topic" not in topic_data:
+                    continue
+                with st.expander(f"Debate: {topic_data.get('topic', 'Unknown')}", expanded=False):
+                    col_bull, col_bear = st.columns(2)
+                    bull = topic_data.get("bull_side", {})
+                    bear = topic_data.get("bear_side", {})
+
+                    with col_bull:
+                        agents_str = ", ".join(bull.get("agents", [])) if isinstance(bull.get("agents"), list) else str(bull.get("agents", ""))
+                        st.markdown(f"**BULL SIDE** ({agents_str})")
+                        st.success(bull.get("argument", ""))
+
+                    with col_bear:
+                        agents_str = ", ".join(bear.get("agents", [])) if isinstance(bear.get("agents"), list) else str(bear.get("agents", ""))
+                        st.markdown(f"**BEAR SIDE** ({agents_str})")
+                        st.error(bear.get("argument", ""))
+
+                    if topic_data.get("moderator_note"):
+                        st.info(f"**Moderator:** {topic_data['moderator_note']}")
+
+            # Sharpest disagreement
+            if debate.get("sharpest_disagreement"):
+                st.warning(f"**Sharpest Disagreement:** {debate['sharpest_disagreement']}")
+
+            # Consensus points
+            consensus_pts = debate.get("consensus_points", [])
+            if consensus_pts and isinstance(consensus_pts, list):
+                st.markdown("**What ALL agents agree on:**")
+                for pt in consensus_pts:
+                    st.markdown(f"- {pt}")
+
+            # Wildcard view
+            if debate.get("wildcard_view"):
+                st.info(f"**Wildcard View:** {debate['wildcard_view']}")
+
 
 # ==============================================================================
 # PAGE: RESEARCH REPORTS
@@ -1333,31 +1377,47 @@ elif page == "Analyze Any Stock":
 
     st.markdown("")
 
-    # Build predictive dropdown from all known tickers (sorted, deduped)
-    _all_tickers_raw = sorted(set(NIFTY_50 + SENSEX_30 + NIFTY_NEXT_50 + EXTRA_WATCHLIST))
+    # Build predictive dropdown: stocks + commodities
+    _stock_tickers = sorted(set(NIFTY_50 + SENSEX_30 + NIFTY_NEXT_50 + EXTRA_WATCHLIST))
+    _commodity_tickers = sorted(COMMODITIES)
+    _all_tickers_raw = _stock_tickers + ["--- COMMODITIES ---"] + _commodity_tickers
     _ticker_options = [""] + _all_tickers_raw
 
+    def _format_ticker(x):
+        if x == "":
+            return "Type to search (e.g. RELIANCE, TCS, GC=F for Gold)..."
+        if x == "--- COMMODITIES ---":
+            return "--- COMMODITIES ---"
+        if x in COMMODITY_INFO:
+            info = COMMODITY_INFO[x]
+            return f"{x} - {info['name']} ({info['category']})"
+        return x
+
     ticker_select = st.selectbox(
-        "Search for a stock (type to filter)",
+        "Search for a stock or commodity (type to filter)",
         options=_ticker_options,
         index=0,
-        format_func=lambda x: "Type to search (e.g. REL, TCS, INFY)..." if x == "" else x,
+        format_func=_format_ticker,
         key="ticker_search",
     )
 
     # Also allow manual entry for tickers not in the list
     custom_ticker = st.text_input(
         "Or enter a custom ticker not in the list",
-        placeholder="e.g. NEWIPO",
+        placeholder="e.g. NEWIPO or GC=F (Gold)",
         key="custom_ticker_input",
     )
 
     # Determine final ticker
-    ticker_input = custom_ticker.strip().upper() if custom_ticker.strip() else ticker_select
+    raw_input = custom_ticker.strip().upper() if custom_ticker.strip() else ticker_select
+    if raw_input == "--- COMMODITIES ---":
+        raw_input = ""
+    ticker_input = raw_input
 
     if ticker_input:
         ticker = ticker_input.strip().upper()
-        if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+        # Don't add .NS suffix for commodities (futures tickers like GC=F, CL=F)
+        if not is_commodity(ticker) and not ticker.endswith(".NS") and not ticker.endswith(".BO") and "=" not in ticker:
             ticker = f"{ticker}.NS"
 
         # Check if we already have data

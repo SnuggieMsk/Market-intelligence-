@@ -18,68 +18,158 @@ console = Console()
 
 
 def build_stock_context(stock: dict) -> str:
-    """Build a detailed context string about the stock for agents to analyze."""
+    """Build a detailed context string about the stock/commodity for agents to analyze."""
+    from scanner.universe import is_commodity, get_commodity_info
+
     metrics = stock.get("metrics", {})
     reasons = stock.get("standout_reasons", [])
+    ticker = stock["ticker"]
+
+    # Detect if this is a commodity
+    if is_commodity(ticker):
+        return _build_commodity_context(stock, metrics, reasons)
 
     context = f"""
-═══ STOCK ANALYSIS REQUEST ═══
+=== STOCK ANALYSIS REQUEST ===
 
-Company: {stock.get('company_name', stock['ticker'])}
-Ticker: {stock['ticker']}
+Company: {stock.get('company_name', ticker)}
+Ticker: {ticker}
 Sector: {stock.get('sector', 'Unknown')} | Industry: {stock.get('industry', 'Unknown')}
-Current Price: ₹{stock.get('current_price', 0):.2f}
-Market Cap: ₹{stock.get('market_cap', 0):,.0f}
+Current Price: {_format_price(stock.get('current_price', 0), ticker)}
+Market Cap: {_format_price(stock.get('market_cap', 0), ticker)}
 Exchange: NSE (National Stock Exchange of India)
 
-═══ WHY THIS STOCK STANDS OUT ═══
-{chr(10).join(f'• {r}' for r in reasons) if reasons else '• High composite score across multiple metrics'}
+=== WHY THIS STANDS OUT ===
+{chr(10).join(f'  - {r}' for r in reasons) if reasons else '  - High composite score across multiple metrics'}
 
-═══ DETAILED METRICS ═══
+=== DETAILED METRICS ===
 
 PRICE ACTION:
-  • Price vs 52-week low: {metrics.get('price_vs_52w_low', 0):.1f}% above
-  • Price vs 52-week high: {metrics.get('price_vs_52w_high', 0):.1f}% below
-  • Daily return: {metrics.get('daily_return', 0):+.2f}%
-  • Weekly return: {metrics.get('weekly_return', 0):+.2f}%
-  • Monthly return: {metrics.get('monthly_return', 0):+.2f}%
-  • Gap percentage: {metrics.get('gap_percentage', 0):+.2f}%
-  • Intraday range: {metrics.get('intraday_range', 0):.2f}%
-  • Price vs 200-SMA: {metrics.get('price_vs_sma200', 0):+.2f}%
+  - Price vs 52-week low: {metrics.get('price_vs_52w_low', 0):.1f}% above
+  - Price vs 52-week high: {metrics.get('price_vs_52w_high', 0):.1f}% below
+  - Daily return: {metrics.get('daily_return', 0):+.2f}%
+  - Weekly return: {metrics.get('weekly_return', 0):+.2f}%
+  - Monthly return: {metrics.get('monthly_return', 0):+.2f}%
+  - Gap percentage: {metrics.get('gap_percentage', 0):+.2f}%
+  - Intraday range: {metrics.get('intraday_range', 0):.2f}%
+  - Price vs 200-SMA: {metrics.get('price_vs_sma200', 0):+.2f}%
 
 VOLUME:
-  • Volume surge (vs 20d avg): {metrics.get('volume_surge', 1):.1f}x
-  • Relative volume (5d vs 20d): {metrics.get('relative_volume', 1):.1f}x
-  • Volume-price trend: {metrics.get('volume_price_trend', 0):+.2f}
-  • Accumulation/Distribution: {'Accumulating' if metrics.get('accumulation_distribution', 0) > 0 else 'Distributing'}
-  • OBV trend: {'Rising' if metrics.get('on_balance_volume_trend', 0) > 0 else 'Falling'}
+  - Volume surge (vs 20d avg): {metrics.get('volume_surge', 1):.1f}x
+  - Relative volume (5d vs 20d): {metrics.get('relative_volume', 1):.1f}x
+  - Volume-price trend: {metrics.get('volume_price_trend', 0):+.2f}
+  - Accumulation/Distribution: {'Accumulating' if metrics.get('accumulation_distribution', 0) > 0 else 'Distributing'}
+  - OBV trend: {'Rising' if metrics.get('on_balance_volume_trend', 0) > 0 else 'Falling'}
 
 VOLATILITY:
-  • Historical volatility (ann.): {metrics.get('historical_volatility', 0):.1f}%
-  • ATR as % of price: {metrics.get('atr_percentage', 0):.2f}%
-  • Bollinger bandwidth: {metrics.get('bollinger_squeeze', 0):.1f}%
-  • IV percentile: {metrics.get('iv_percentile', 0):.0f}%
+  - Historical volatility (ann.): {metrics.get('historical_volatility', 0):.1f}%
+  - ATR as % of price: {metrics.get('atr_percentage', 0):.2f}%
+  - Bollinger bandwidth: {metrics.get('bollinger_squeeze', 0):.1f}%
+  - IV percentile: {metrics.get('iv_percentile', 0):.0f}%
 
 MOMENTUM:
-  • RSI (14): {metrics.get('rsi', 50):.1f}
-  • MACD: {'Bullish' if metrics.get('macd_signal', 0) > 0 else 'Bearish'}
-  • Stochastic: {'Bullish crossover' if metrics.get('stochastic_crossover', 0) > 0 else 'Bearish crossover'}
-  • Momentum score: {metrics.get('momentum_score', 5):.1f}/10
-  • Rate of change (10d): {metrics.get('rate_of_change', 0):+.2f}%
+  - RSI (14): {metrics.get('rsi', 50):.1f}
+  - MACD: {'Bullish' if metrics.get('macd_signal', 0) > 0 else 'Bearish'}
+  - Stochastic: {'Bullish crossover' if metrics.get('stochastic_crossover', 0) > 0 else 'Bearish crossover'}
+  - Momentum score: {metrics.get('momentum_score', 5):.1f}/10
+  - Rate of change (10d): {metrics.get('rate_of_change', 0):+.2f}%
 
 FUNDAMENTALS:
-  • P/E ratio: {metrics.get('pe_ratio_vs_sector', 0):.1f}
-  • P/B ratio: {metrics.get('pb_ratio', 0):.2f}
-  • Debt/Equity: {metrics.get('debt_to_equity', 0):.1f}
-  • Revenue growth: {metrics.get('revenue_growth', 0):+.1f}%
-  • Earnings growth: {metrics.get('earnings_surprise', 0):+.1f}%
-  • FCF yield: {metrics.get('free_cash_flow_yield', 0):.2f}%
+  - P/E ratio: {metrics.get('pe_ratio_vs_sector', 0):.1f}
+  - P/B ratio: {metrics.get('pb_ratio', 0):.2f}
+  - Debt/Equity: {metrics.get('debt_to_equity', 0):.1f}
+  - Revenue growth: {metrics.get('revenue_growth', 0):+.1f}%
+  - Earnings growth: {metrics.get('earnings_surprise', 0):+.1f}%
+  - FCF yield: {metrics.get('free_cash_flow_yield', 0):.2f}%
 
 SENTIMENT & MARKET:
-  • Short interest: {metrics.get('short_interest', 0):.1f}% of float
-  • Insider ownership: {metrics.get('insider_buying', 0):.1f}%
-  • Analyst rating: {metrics.get('analyst_rating_change', 3):.1f}/5 (1=strong buy)
-  • Sector relative strength: {metrics.get('sector_relative_strength', 0):+.1f}%
+  - Short interest: {metrics.get('short_interest', 0):.1f}% of float
+  - Insider ownership: {metrics.get('insider_buying', 0):.1f}%
+  - Analyst rating: {metrics.get('analyst_rating_change', 3):.1f}/5 (1=strong buy)
+  - Sector relative strength: {metrics.get('sector_relative_strength', 0):+.1f}%
+"""
+    return context
+
+
+def _format_price(price, ticker=""):
+    """Format price with correct currency symbol."""
+    from scanner.universe import is_commodity, get_commodity_info
+    if is_commodity(ticker):
+        info = get_commodity_info(ticker)
+        sym = "$" if info.get("currency") == "USD" else "Rs."
+        return f"{sym}{price:,.2f}"
+    return f"Rs.{price:,.2f}"
+
+
+def _build_commodity_context(stock: dict, metrics: dict, reasons: list) -> str:
+    """Build context string specifically for commodity analysis."""
+    from scanner.universe import get_commodity_info
+
+    ticker = stock["ticker"]
+    info = get_commodity_info(ticker)
+    currency_sym = "$" if info.get("currency") == "USD" else "Rs."
+
+    context = f"""
+=== COMMODITY ANALYSIS REQUEST ===
+
+Commodity: {info.get('name', ticker)}
+Ticker: {ticker}
+Category: {info.get('category', 'Unknown')}
+Exchange: {info.get('exchange', 'Unknown')}
+Current Price: {currency_sym}{stock.get('current_price', 0):,.2f}
+Currency: {info.get('currency', 'USD')}
+Asset Type: COMMODITY (Not a stock — no P/E, no earnings, no management)
+
+=== WHY THIS COMMODITY STANDS OUT ===
+{chr(10).join(f'  - {r}' for r in reasons) if reasons else '  - Significant price/volume activity detected'}
+
+=== PRICE & TECHNICAL METRICS ===
+
+PRICE ACTION:
+  - Price vs 52-week low: {metrics.get('price_vs_52w_low', 0):.1f}% above
+  - Price vs 52-week high: {metrics.get('price_vs_52w_high', 0):.1f}% below
+  - Daily return: {metrics.get('daily_return', 0):+.2f}%
+  - Weekly return: {metrics.get('weekly_return', 0):+.2f}%
+  - Monthly return: {metrics.get('monthly_return', 0):+.2f}%
+  - Gap percentage: {metrics.get('gap_percentage', 0):+.2f}%
+  - Intraday range: {metrics.get('intraday_range', 0):.2f}%
+  - Price vs 200-SMA: {metrics.get('price_vs_sma200', 0):+.2f}%
+
+VOLUME & OPEN INTEREST:
+  - Volume surge (vs 20d avg): {metrics.get('volume_surge', 1):.1f}x
+  - Relative volume (5d vs 20d): {metrics.get('relative_volume', 1):.1f}x
+  - Volume-price trend: {metrics.get('volume_price_trend', 0):+.2f}
+  - Accumulation/Distribution: {'Accumulating' if metrics.get('accumulation_distribution', 0) > 0 else 'Distributing'}
+  - OBV trend: {'Rising' if metrics.get('on_balance_volume_trend', 0) > 0 else 'Falling'}
+
+VOLATILITY:
+  - Historical volatility (ann.): {metrics.get('historical_volatility', 0):.1f}%
+  - ATR as % of price: {metrics.get('atr_percentage', 0):.2f}%
+  - Bollinger bandwidth: {metrics.get('bollinger_squeeze', 0):.1f}%
+  - IV percentile: {metrics.get('iv_percentile', 0):.0f}%
+
+MOMENTUM:
+  - RSI (14): {metrics.get('rsi', 50):.1f}
+  - MACD: {'Bullish' if metrics.get('macd_signal', 0) > 0 else 'Bearish'}
+  - Stochastic: {'Bullish crossover' if metrics.get('stochastic_crossover', 0) > 0 else 'Bearish crossover'}
+  - Momentum score: {metrics.get('momentum_score', 5):.1f}/10
+  - Rate of change (10d): {metrics.get('rate_of_change', 0):+.2f}%
+
+=== COMMODITY-SPECIFIC ANALYSIS CONTEXT ===
+(Use your domain knowledge for the following — data above is technical only)
+
+KEY FACTORS TO CONSIDER:
+  - Supply/demand fundamentals for {info.get('name', ticker)}
+  - Geopolitical risks affecting this commodity
+  - Seasonal patterns and weather impacts
+  - USD/DXY correlation (inverse for most commodities)
+  - Central bank policy impact (especially on precious metals)
+  - India-specific: import dependency, MCX trends, government policy
+  - Inventory levels at major exchanges (LME/COMEX/SHFE)
+  - Contango/backwardation structure implications
+
+NOTE: Fundamental metrics (P/E, P/B, D/E, revenue, earnings, FCF) are NOT applicable.
+Focus on: technicals, supply-demand, macro drivers, positioning, and seasonal patterns.
 """
     return context
 
@@ -87,9 +177,9 @@ SENTIMENT & MARKET:
 ANALYSIS_PROMPT_TEMPLATE = """
 {stock_context}
 
-═══ YOUR ANALYSIS TASK ═══
+=== YOUR ANALYSIS TASK ===
 
-Analyze this stock from YOUR unique perspective. Be BRUTAL and HONEST.
+Analyze this asset from YOUR unique perspective. Be BRUTAL and HONEST.
 Do NOT sugarcoat. If it's garbage, say it's garbage. If it's gold, explain why.
 
 You MUST respond in this exact JSON format:

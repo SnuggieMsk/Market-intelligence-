@@ -61,6 +61,61 @@ EXTRA_WATCHLIST = [
     "BANDHANBNK", "RBLBANK", "JUBLFOOD", "DEVYANI", "SWIGGY",
 ]
 
+# ── Commodities (MCX India + Global via yfinance) ─────────────────────────────
+# MCX-tracked via NSE ETFs + Global futures
+COMMODITIES = [
+    # Precious Metals
+    "GC=F",          # Gold Futures (COMEX)
+    "SI=F",          # Silver Futures (COMEX)
+    "PL=F",          # Platinum Futures
+    # Energy
+    "CL=F",          # Crude Oil WTI
+    "BZ=F",          # Brent Crude Oil
+    "NG=F",          # Natural Gas
+    # Base Metals
+    "HG=F",          # Copper Futures
+    "ALI=F",         # Aluminum Futures
+    # Agriculture
+    "ZC=F",          # Corn Futures
+    "ZW=F",          # Wheat Futures
+    "ZS=F",          # Soybean Futures
+    "CT=F",          # Cotton Futures
+    "KC=F",          # Coffee Futures
+    "SB=F",          # Sugar Futures
+    # Indian Commodity ETFs (NSE-listed, track MCX prices)
+    "GOLDBEES.NS",   # Gold ETF (Nippon India)
+    "SILVERBEES.NS", # Silver ETF (Nippon India)
+    "CRUDEOIL.NS",   # Crude Oil ETF (if available)
+]
+
+COMMODITY_INFO = {
+    "GC=F": {"name": "Gold", "category": "Precious Metals", "exchange": "COMEX", "currency": "USD"},
+    "SI=F": {"name": "Silver", "category": "Precious Metals", "exchange": "COMEX", "currency": "USD"},
+    "PL=F": {"name": "Platinum", "category": "Precious Metals", "exchange": "COMEX", "currency": "USD"},
+    "CL=F": {"name": "Crude Oil WTI", "category": "Energy", "exchange": "NYMEX", "currency": "USD"},
+    "BZ=F": {"name": "Brent Crude Oil", "category": "Energy", "exchange": "ICE", "currency": "USD"},
+    "NG=F": {"name": "Natural Gas", "category": "Energy", "exchange": "NYMEX", "currency": "USD"},
+    "HG=F": {"name": "Copper", "category": "Base Metals", "exchange": "COMEX", "currency": "USD"},
+    "ALI=F": {"name": "Aluminum", "category": "Base Metals", "exchange": "LME", "currency": "USD"},
+    "ZC=F": {"name": "Corn", "category": "Agriculture", "exchange": "CBOT", "currency": "USD"},
+    "ZW=F": {"name": "Wheat", "category": "Agriculture", "exchange": "CBOT", "currency": "USD"},
+    "ZS=F": {"name": "Soybeans", "category": "Agriculture", "exchange": "CBOT", "currency": "USD"},
+    "CT=F": {"name": "Cotton", "category": "Agriculture", "exchange": "ICE", "currency": "USD"},
+    "KC=F": {"name": "Coffee", "category": "Agriculture", "exchange": "ICE", "currency": "USD"},
+    "SB=F": {"name": "Sugar", "category": "Agriculture", "exchange": "ICE", "currency": "USD"},
+    "GOLDBEES.NS": {"name": "Gold ETF India", "category": "Precious Metals", "exchange": "NSE", "currency": "INR"},
+    "SILVERBEES.NS": {"name": "Silver ETF India", "category": "Precious Metals", "exchange": "NSE", "currency": "INR"},
+    "CRUDEOIL.NS": {"name": "Crude Oil ETF India", "category": "Energy", "exchange": "NSE", "currency": "INR"},
+}
+
+def is_commodity(ticker: str) -> bool:
+    """Check if a ticker is a commodity."""
+    return ticker in COMMODITIES or ticker in COMMODITY_INFO
+
+def get_commodity_info(ticker: str) -> dict:
+    """Get commodity metadata."""
+    return COMMODITY_INFO.get(ticker, {"name": ticker, "category": "Unknown", "exchange": "Unknown", "currency": "USD"})
+
 
 def _add_suffix(tickers: list) -> list:
     """Add .NS suffix for yfinance NSE lookup."""

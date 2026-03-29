@@ -22,36 +22,64 @@ META_AGENTS = [
         "name": "Data Synthesizer",
         "role": "data_synthesis",
         "system_prompt": """You are the Data Synthesizer. You aggregate all quantitative data points
-from 32+ analyst agents into a coherent data-driven summary.
+from 40+ analyst agents into a coherent data-driven summary.
 Focus on: What do the numbers actually say? What's the consensus on valuation?
 Where do the quantitative agents agree and disagree?
+For commodities: focus on price action, volume patterns, volatility, and momentum — not earnings/P/E.
 Output a clear, data-driven summary with specific numbers.""",
     },
     {
         "name": "Sentiment Synthesizer",
         "role": "sentiment_synthesis",
         "system_prompt": """You are the Sentiment Synthesizer. You aggregate all sentiment, behavioral,
-and market psychology analyses from the 32+ agents.
+and market psychology analyses from the 40+ agents.
 Focus on: What's the overall mood? Are agents bullish or bearish? What behavioral biases
 are flagged? What does crowd psychology suggest?
+For commodities: include geopolitical sentiment, supply fear/greed, and speculative positioning mood.
 Output a clear sentiment summary with specific agent references.""",
     },
     {
         "name": "Prediction Synthesizer",
         "role": "prediction_synthesis",
         "system_prompt": """You are the Prediction Synthesizer. You aggregate all forward-looking views
-from the 32+ agents into probability-weighted scenarios.
+from the 40+ agents into probability-weighted scenarios.
 Focus on: What are the bull/bear/base cases? What probabilities does each deserve?
 What catalysts and risks are most cited? What's the expected value?
+For commodities: include supply disruption scenarios, demand destruction risks, and macro regime shifts.
 Output scenario analysis with explicit probabilities.""",
+    },
+    {
+        "name": "Debate Moderator",
+        "role": "debate_moderator",
+        "system_prompt": """You are the Debate Moderator. Your job is to identify and present the MOST
+INTERESTING DISAGREEMENTS between agents. Find where agents with strong convictions disagree.
+Structure the output as a debate with named agents arguing opposing sides.
+
+Format your response as JSON:
+{
+    "debate_topic_1": {
+        "topic": "The core question they disagree on",
+        "bull_side": {"agents": ["Agent1", "Agent2"], "argument": "Their bull case in 2-3 sentences"},
+        "bear_side": {"agents": ["Agent3", "Agent4"], "argument": "Their bear case in 2-3 sentences"},
+        "moderator_note": "Who has the stronger argument and why (1-2 sentences)"
+    },
+    "debate_topic_2": { ... },
+    "debate_topic_3": { ... },
+    "sharpest_disagreement": "Name the two agents who disagree most strongly and summarize their clash",
+    "consensus_points": ["What ALL agents agree on (2-3 points)"],
+    "wildcard_view": "The most unique/contrarian take from any agent that others should consider"
+}
+
+Be specific — name the agents, quote their reasoning, highlight where smart people disagree.""",
     },
     {
         "name": "Final Verdict Chief",
         "role": "final_verdict",
         "system_prompt": """You are the Chief Investment Officer making the FINAL call.
-You have read ALL 32+ analyst opinions and the three synthesis reports.
+You have read ALL 40+ analyst opinions and the synthesis reports (data, sentiment, prediction, debate).
 Your job is to cut through the noise and deliver a clear, actionable verdict.
 Be decisive. Weigh the evidence. Explain your reasoning.
+For commodities: focus on supply-demand dynamics, macro positioning, and technical signals — not corporate fundamentals.
 Include: verdict, conviction, time horizon, position sizing suggestion, key risks, and triggers.""",
     },
 ]
@@ -313,12 +341,13 @@ def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: di
 
     analyses_summary = build_analyses_summary(analyses)
 
-    # Step 1: Run the three synthesis agents
+    # Step 1: Run the three synthesis agents + debate moderator
     synthesis_results = {}
 
-    for i, meta_agent in enumerate(META_AGENTS[:3]):  # Data, Sentiment, Prediction synthesizers
+    # Run Data, Sentiment, Prediction synthesizers
+    for i, meta_agent in enumerate(META_AGENTS[:3]):
         if i > 0:
-            time.sleep(INTER_AGENT_DELAY)  # Avoid back-to-back rate limits
+            time.sleep(INTER_AGENT_DELAY)
         console.print(f"  [cyan]Running {meta_agent['name']}...[/cyan]")
         try:
             prompt = SYNTHESIS_PROMPT.format(analyses_summary=analyses_summary)
@@ -333,9 +362,27 @@ def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: di
             console.print(f"  [red]FAIL {meta_agent['name']} failed: {e}[/red]")
             synthesis_results[meta_agent["role"]] = {"summary": f"Failed: {e}"}
 
-    # Step 2: Final Verdict from CIO
+    # Step 2: Run Debate Moderator — captures agent disagreements
     time.sleep(INTER_AGENT_DELAY)
-    console.print(f"  [cyan]Running Final Verdict Chief...[/cyan]")
+    debate_agent = META_AGENTS[3]  # Debate Moderator
+    console.print(f"  [cyan]Running {debate_agent['name']}...[/cyan]")
+    try:
+        debate_prompt = SYNTHESIS_PROMPT.format(analyses_summary=analyses_summary)
+        raw = llm_pool.call_llm(
+            prompt=debate_prompt,
+            system_instruction=debate_agent["system_prompt"],
+            prefer="gemini_lite",
+        )
+        synthesis_results["debate"] = parse_agent_response(raw)
+        console.print(f"  [green]OK {debate_agent['name']} complete[/green]")
+    except Exception as e:
+        console.print(f"  [red]FAIL {debate_agent['name']} failed: {e}[/red]")
+        synthesis_results["debate"] = {"summary": f"Debate generation failed: {e}"}
+
+    # Step 3: Final Verdict from CIO (uses all 4 synthesis outputs)
+    time.sleep(INTER_AGENT_DELAY)
+    final_agent = META_AGENTS[4]  # Final Verdict Chief
+    console.print(f"  [cyan]Running {final_agent['name']}...[/cyan]")
     try:
         final_prompt = FINAL_VERDICT_PROMPT.format(
             analyses_summary=analyses_summary,
@@ -345,8 +392,8 @@ def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: di
         )
         raw = llm_pool.call_llm(
             prompt=final_prompt,
-            system_instruction=META_AGENTS[3]["system_prompt"],
-            prefer="gemini",
+            system_instruction=final_agent["system_prompt"],
+            prefer="gemini_lite",
         )
         final_report = parse_agent_response(raw)
     except Exception as e:
@@ -370,6 +417,7 @@ def aggregate_analyses(ticker: str, scan_id: int, analyses: list, stock_data: di
     final_report["data_summary"] = synthesis_results.get("data_synthesis", {}).get("summary", "")
     final_report["sentiment_summary"] = synthesis_results.get("sentiment_synthesis", {}).get("summary", "")
     final_report["prediction_summary"] = synthesis_results.get("prediction_synthesis", {}).get("summary", "")
+    final_report["debate"] = synthesis_results.get("debate", {})
     final_report["synthesis_details"] = synthesis_results
 
     # Save to database

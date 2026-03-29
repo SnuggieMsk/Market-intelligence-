@@ -641,44 +641,56 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         metrics["rate_of_change"] = ((close.iloc[-1] / close.iloc[-10]) - 1) * 100 if len(close) >= 10 else 0
 
         # ══════════════════════════════════════════════════════════════════════
-        # FUNDAMENTALS (6 metrics)
+        # FUNDAMENTALS (6 metrics) — skip for commodities
         # ══════════════════════════════════════════════════════════════════════
+        from scanner.universe import is_commodity as _is_commodity
+        _is_comm = _is_commodity(ticker)
 
-        # 23. P/E ratio vs sector average (simplified: just raw PE)
-        pe = info.get("trailingPE") or info.get("forwardPE")
-        metrics["pe_ratio_vs_sector"] = pe if pe and pe > 0 else 0
-        if pe and 0 < pe < 10:
-            reasons.append(f"Very low P/E: {pe:.1f}")
-
-        # 24. Price-to-Book ratio
-        pb = info.get("priceToBook")
-        metrics["pb_ratio"] = pb if pb and pb > 0 else 0
-        if pb and 0 < pb < 1:
-            reasons.append(f"Trading below book value (P/B: {pb:.2f})")
-
-        # 25. Debt-to-Equity
-        de = info.get("debtToEquity")
-        metrics["debt_to_equity"] = de if de else 0
-
-        # 26. Revenue growth
-        rg = info.get("revenueGrowth")
-        metrics["revenue_growth"] = (rg * 100) if rg else 0
-        if rg and rg > 0.25:
-            reasons.append(f"Strong revenue growth: {rg*100:.0f}%")
-
-        # 27. Earnings surprise (approximated from earnings growth)
-        eg = info.get("earningsGrowth")
-        metrics["earnings_surprise"] = (eg * 100) if eg else 0
-        if eg and eg > 0.30:
-            reasons.append(f"Strong earnings growth: {eg*100:.0f}%")
-
-        # 28. Free cash flow yield
-        fcf = info.get("freeCashflow")
-        mcap = info.get("marketCap")
-        if fcf and mcap and mcap > 0:
-            metrics["free_cash_flow_yield"] = (fcf / mcap) * 100
-        else:
+        if _is_comm:
+            # Commodities don't have P/E, P/B, D/E, revenue, earnings, FCF
+            metrics["pe_ratio_vs_sector"] = 0
+            metrics["pb_ratio"] = 0
+            metrics["debt_to_equity"] = 0
+            metrics["revenue_growth"] = 0
+            metrics["earnings_surprise"] = 0
             metrics["free_cash_flow_yield"] = 0
+            reasons.append(f"Commodity asset - fundamentals N/A, focus on supply/demand & technicals")
+        else:
+            # 23. P/E ratio vs sector average (simplified: just raw PE)
+            pe = info.get("trailingPE") or info.get("forwardPE")
+            metrics["pe_ratio_vs_sector"] = pe if pe and pe > 0 else 0
+            if pe and 0 < pe < 10:
+                reasons.append(f"Very low P/E: {pe:.1f}")
+
+            # 24. Price-to-Book ratio
+            pb = info.get("priceToBook")
+            metrics["pb_ratio"] = pb if pb and pb > 0 else 0
+            if pb and 0 < pb < 1:
+                reasons.append(f"Trading below book value (P/B: {pb:.2f})")
+
+            # 25. Debt-to-Equity
+            de = info.get("debtToEquity")
+            metrics["debt_to_equity"] = de if de else 0
+
+            # 26. Revenue growth
+            rg = info.get("revenueGrowth")
+            metrics["revenue_growth"] = (rg * 100) if rg else 0
+            if rg and rg > 0.25:
+                reasons.append(f"Strong revenue growth: {rg*100:.0f}%")
+
+            # 27. Earnings surprise (approximated from earnings growth)
+            eg = info.get("earningsGrowth")
+            metrics["earnings_surprise"] = (eg * 100) if eg else 0
+            if eg and eg > 0.30:
+                reasons.append(f"Strong earnings growth: {eg*100:.0f}%")
+
+            # 28. Free cash flow yield
+            fcf = info.get("freeCashflow")
+            mcap = info.get("marketCap")
+            if fcf and mcap and mcap > 0:
+                metrics["free_cash_flow_yield"] = (fcf / mcap) * 100
+            else:
+                metrics["free_cash_flow_yield"] = 0
 
         # ══════════════════════════════════════════════════════════════════════
         # SENTIMENT & MARKET (4 metrics)
@@ -708,15 +720,30 @@ def compute_all_metrics(ticker: str) -> Optional[dict]:
         # METADATA
         # ══════════════════════════════════════════════════════════════════════
 
+        # Set metadata — use commodity info if applicable
+        if _is_comm:
+            from scanner.universe import get_commodity_info
+            _comm_info = get_commodity_info(ticker)
+            _company_name = _comm_info.get("name", info.get("shortName", ticker))
+            _sector = _comm_info.get("category", "Commodities")
+            _industry = f"{_comm_info.get('exchange', '')} Futures"
+            _market_cap = 0  # Commodities don't have market cap
+        else:
+            _company_name = info.get("shortName", ticker)
+            _sector = info.get("sector", "Unknown")
+            _industry = info.get("industry", "Unknown")
+            _market_cap = info.get("marketCap", 0)
+
         result = {
             "ticker": ticker,
-            "company_name": info.get("shortName", ticker),
-            "sector": info.get("sector", "Unknown"),
-            "industry": info.get("industry", "Unknown"),
-            "market_cap": info.get("marketCap", 0),
+            "company_name": _company_name,
+            "sector": _sector,
+            "industry": _industry,
+            "market_cap": _market_cap,
             "current_price": float(latest_close),
             "metrics": {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in metrics.items()},
             "standout_reasons": reasons,
+            "asset_type": "commodity" if _is_comm else "stock",
         }
 
         # Cache for re-runs
