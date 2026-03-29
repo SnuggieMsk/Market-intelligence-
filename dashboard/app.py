@@ -441,7 +441,7 @@ with st.sidebar:
             "Research Reports",
             "Quant Predictions",
             "Consensus Heatmap",
-            "Analyze Any Stock",
+            "Analyze Anything",
             "Scan History",
         ],
         label_visibility="collapsed",
@@ -743,6 +743,73 @@ elif page == "Stock Deep Dive":
                     for r in safe_json(a.get("risks")):
                         st.markdown(f"- {r}")
 
+    # CIO Verdict & Agent Debate on Stock Deep Dive
+    if report and report.get("full_report_json"):
+        st.markdown("---")
+        st.markdown("### Final CIO Verdict")
+        _full = json.loads(report["full_report_json"]) if isinstance(report["full_report_json"], str) else report["full_report_json"]
+
+        _v1, _v2, _v3 = st.columns(3)
+        _v1.metric("Verdict", _full.get("overall_verdict", "N/A"))
+        _v2.metric("Score", f"{_full.get('overall_score', 0)}/10")
+        _v3.metric("Conviction", str(_full.get("conviction", "N/A")).replace("_", " ").title())
+
+        if _full.get("bull_case"):
+            st.success(f"**Bull Case:** {_full['bull_case']}")
+        if _full.get("bear_case"):
+            st.error(f"**Bear Case:** {_full['bear_case']}")
+        if _full.get("entry_strategy"):
+            st.markdown(f"**Entry:** {_full['entry_strategy']}")
+        if _full.get("time_horizon"):
+            st.markdown(f"**Time Horizon:** {_full['time_horizon']}")
+
+        # Agent Debate
+        _debate = _full.get("debate", {})
+        if _debate and isinstance(_debate, dict) and len(_debate) > 1:
+            st.markdown("---")
+            st.markdown("### Agent Debate")
+            st.caption("Where the AI agents disagree most strongly")
+
+            if _debate.get("summary"):
+                st.markdown(_debate["summary"])
+
+            _disagreements = _debate.get("key_disagreements", [])
+            if _disagreements and isinstance(_disagreements, list):
+                st.markdown("#### Key Disagreements")
+                for _i, _d in enumerate(_disagreements, 1):
+                    st.warning(f"**Debate {_i}:** {_d}")
+
+            _bull_pts = _debate.get("strongest_bull_points", [])
+            _bear_pts = _debate.get("strongest_bear_points", [])
+            if _bull_pts or _bear_pts:
+                st.markdown("#### Bull vs Bear")
+                _cb, _cbr = st.columns(2)
+                with _cb:
+                    st.markdown("**BULL CASE**")
+                    for _pt in (_bull_pts if isinstance(_bull_pts, list) else []):
+                        st.success(_pt)
+                with _cbr:
+                    st.markdown("**BEAR CASE**")
+                    for _pt in (_bear_pts if isinstance(_bear_pts, list) else []):
+                        st.error(_pt)
+
+            _agreements = _debate.get("key_agreements", [])
+            if _agreements and isinstance(_agreements, list):
+                st.markdown("#### What ALL Agents Agree On")
+                for _pt in _agreements:
+                    st.markdown(f"- {_pt}")
+
+            _conf = _debate.get("confidence_in_consensus")
+            if _conf is not None:
+                _pct = int(float(_conf) * 100) if float(_conf) <= 1 else int(float(_conf))
+                st.metric("Consensus Confidence", f"{_pct}%")
+
+            _outliers = _debate.get("notable_outlier_views", [])
+            if _outliers and isinstance(_outliers, list):
+                st.markdown("#### Wildcard & Outlier Views")
+                for _view in _outliers:
+                    st.info(f"{_view}")
+
 
 # ==============================================================================
 # PAGE: AGENT REPORTS
@@ -931,42 +998,70 @@ elif page == "Agent Reports":
             st.markdown("### Agent Debate")
             st.caption("Where the AI agents disagree most strongly")
 
-            # Show debate topics
+            # Debate summary
+            if debate.get("summary"):
+                st.markdown(debate["summary"])
+
+            # Key Disagreements (the core debate)
+            disagreements = debate.get("key_disagreements", [])
+            if disagreements and isinstance(disagreements, list):
+                st.markdown("#### Key Disagreements")
+                for i, d in enumerate(disagreements, 1):
+                    st.warning(f"**Debate {i}:** {d}")
+
+            # Bull vs Bear — side by side
+            bull_pts = debate.get("strongest_bull_points", [])
+            bear_pts = debate.get("strongest_bear_points", [])
+            if bull_pts or bear_pts:
+                st.markdown("#### Bull vs Bear")
+                col_bull, col_bear = st.columns(2)
+                with col_bull:
+                    st.markdown("**BULL CASE**")
+                    for pt in (bull_pts if isinstance(bull_pts, list) else []):
+                        st.success(pt)
+                with col_bear:
+                    st.markdown("**BEAR CASE**")
+                    for pt in (bear_pts if isinstance(bear_pts, list) else []):
+                        st.error(pt)
+
+            # Key agreements
+            agreements = debate.get("key_agreements", [])
+            if agreements and isinstance(agreements, list):
+                st.markdown("#### What ALL Agents Agree On")
+                for pt in agreements:
+                    st.markdown(f"- {pt}")
+
+            # Confidence in consensus
+            conf = debate.get("confidence_in_consensus")
+            if conf is not None:
+                pct = int(float(conf) * 100) if float(conf) <= 1 else int(float(conf))
+                st.metric("Consensus Confidence", f"{pct}%")
+
+            # Notable outlier views
+            outliers = debate.get("notable_outlier_views", [])
+            if outliers and isinstance(outliers, list):
+                st.markdown("#### Wildcard & Outlier Views")
+                for view in outliers:
+                    st.info(f"{view}")
+
+            # Legacy format support (debate_topic_1, etc.)
             for key, topic_data in debate.items():
                 if not isinstance(topic_data, dict) or "topic" not in topic_data:
                     continue
                 with st.expander(f"Debate: {topic_data.get('topic', 'Unknown')}", expanded=False):
-                    col_bull, col_bear = st.columns(2)
+                    col_b, col_br = st.columns(2)
                     bull = topic_data.get("bull_side", {})
                     bear = topic_data.get("bear_side", {})
-
-                    with col_bull:
+                    with col_b:
                         agents_str = ", ".join(bull.get("agents", [])) if isinstance(bull.get("agents"), list) else str(bull.get("agents", ""))
                         st.markdown(f"**BULL SIDE** ({agents_str})")
                         st.success(bull.get("argument", ""))
-
-                    with col_bear:
+                    with col_br:
                         agents_str = ", ".join(bear.get("agents", [])) if isinstance(bear.get("agents"), list) else str(bear.get("agents", ""))
                         st.markdown(f"**BEAR SIDE** ({agents_str})")
                         st.error(bear.get("argument", ""))
-
                     if topic_data.get("moderator_note"):
                         st.info(f"**Moderator:** {topic_data['moderator_note']}")
-
-            # Sharpest disagreement
-            if debate.get("sharpest_disagreement"):
-                st.warning(f"**Sharpest Disagreement:** {debate['sharpest_disagreement']}")
-
-            # Consensus points
-            consensus_pts = debate.get("consensus_points", [])
-            if consensus_pts and isinstance(consensus_pts, list):
-                st.markdown("**What ALL agents agree on:**")
-                for pt in consensus_pts:
-                    st.markdown(f"- {pt}")
-
-            # Wildcard view
-            if debate.get("wildcard_view"):
-                st.info(f"**Wildcard View:** {debate['wildcard_view']}")
 
 
 # ==============================================================================
@@ -1360,13 +1455,13 @@ elif page == "Consensus Heatmap":
 # PAGE: ANALYZE ANY STOCK
 # ==============================================================================
 
-elif page == "Analyze Any Stock":
+elif page == "Analyze Anything":
     # Read-only if: shared mode OR cloud deployment (no API keys available)
     _has_api_keys = bool(os.environ.get("GEMINI_API_KEYS") or os.environ.get("GEMINI_LITE_API_KEY") or os.environ.get("GROQ_API_KEYS"))
     _is_read_only = os.environ.get("SHARE_READ_ONLY", "") == "1" or not _has_api_keys
 
-    st.markdown('<p class="hero-text">Analyze Any Stock</p>', unsafe_allow_html=True)
-    st.markdown('<p class="hero-sub">SEARCH ANY NSE/BSE TICKER FOR FULL ANALYSIS</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-text">Analyze Anything</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">STOCKS | COMMODITIES | ETFs — 42 AI AGENTS + QUANT MODELS</p>', unsafe_allow_html=True)
 
     if _is_read_only:
         st.info(
@@ -1394,19 +1489,30 @@ elif page == "Analyze Any Stock":
         return x
 
     ticker_select = st.selectbox(
-        "Search for a stock or commodity (type to filter)",
+        "Search stocks & commodities (type to filter)",
         options=_ticker_options,
         index=0,
         format_func=_format_ticker,
         key="ticker_search",
     )
 
-    # Also allow manual entry for tickers not in the list
+    # Also allow manual entry
     custom_ticker = st.text_input(
-        "Or enter a custom ticker not in the list",
-        placeholder="e.g. NEWIPO or GC=F (Gold)",
+        "Or type any name — GOLD, CRUDE, SILVER, RELIANCE, TCS...",
+        placeholder="e.g. GOLD, CRUDE, TCS, NEWIPO",
         key="custom_ticker_input",
     )
+
+    # Common name -> ticker mapping for user-friendly input
+    _COMMODITY_ALIASES = {
+        "GOLD": "GC=F", "SILVER": "SI=F", "PLATINUM": "PL=F",
+        "CRUDE": "CL=F", "CRUDEOIL": "CL=F", "OIL": "CL=F", "WTI": "CL=F",
+        "BRENT": "BZ=F", "NATURALGAS": "NG=F", "GAS": "NG=F", "NATGAS": "NG=F",
+        "COPPER": "HG=F", "ALUMINUM": "ALI=F", "ALUMINIUM": "ALI=F",
+        "CORN": "ZC=F", "WHEAT": "ZW=F", "SOYBEAN": "ZS=F", "SOYBEANS": "ZS=F",
+        "COTTON": "CT=F", "COFFEE": "KC=F", "SUGAR": "SB=F",
+        "GOLDETF": "GOLDBEES.NS", "SILVERETF": "SILVERBEES.NS",
+    }
 
     # Determine final ticker
     raw_input = custom_ticker.strip().upper() if custom_ticker.strip() else ticker_select
@@ -1416,8 +1522,12 @@ elif page == "Analyze Any Stock":
 
     if ticker_input:
         ticker = ticker_input.strip().upper()
+        # Check commodity aliases first (GOLD -> GC=F, CRUDE -> CL=F, etc.)
+        if ticker in _COMMODITY_ALIASES:
+            ticker = _COMMODITY_ALIASES[ticker]
+            st.info(f"Mapped to commodity ticker: **{ticker}** ({COMMODITY_INFO.get(ticker, {}).get('name', '')})")
         # Don't add .NS suffix for commodities (futures tickers like GC=F, CL=F)
-        if not is_commodity(ticker) and not ticker.endswith(".NS") and not ticker.endswith(".BO") and "=" not in ticker:
+        elif not is_commodity(ticker) and not ticker.endswith(".NS") and not ticker.endswith(".BO") and "=" not in ticker:
             ticker = f"{ticker}.NS"
 
         # Check if we already have data
@@ -1523,11 +1633,12 @@ elif page == "Analyze Any Stock":
     else:
         st.markdown("""
         **How it works:**
-        1. Search for any NSE/BSE listed stock from the dropdown (type to filter)
-        2. Or enter a custom ticker not in the list
-        3. Click 'Run Full Analysis' to run 32+ metrics, 36 AI agents + 11 research agents
-        4. Watch each step complete in real-time
-        5. View detailed results in Stock Deep Dive, Agent Reports, or Quant Predictions
+        1. Search for any **stock** (RELIANCE, TCS) or **commodity** (GOLD, CRUDE, SILVER) from the dropdown
+        2. Or just type the name — common names like GOLD, CRUDE, SILVER auto-map to the right ticker
+        3. Click 'Run Full Analysis' — 42 AI agents + 11 research agents + quant models analyze it
+        4. Watch each step complete in real-time (you can stop anytime)
+        5. View the **Agent Debate** — see where agents disagree most sharply
+        6. Browse results in Stock Deep Dive, Agent Reports, or Quant Predictions
         """)
 
 
