@@ -441,6 +441,7 @@ with st.sidebar:
             "Research Reports",
             "Quant Predictions",
             "Consensus Heatmap",
+            "Future Outlook",
             "Analyze Anything",
             "Scan History",
         ],
@@ -1196,6 +1197,136 @@ elif page == "Quant Predictions":
     predictions = quant.get("predictions_json", {})
     summary = quant.get("summary_json", {})
 
+    # ── Mutual Fund Quant Section ────────────────────────────────────────
+    if isinstance(summary, dict) and summary.get("type") == "mutual_fund":
+        perf = summary.get("performance", {})
+        risk = summary.get("risk", {})
+        sip = summary.get("sip_analysis", {})
+        proj = summary.get("projections", {})
+
+        st.markdown("---")
+        st.markdown("### Fund Performance")
+        pc1, pc2, pc3, pc4, pc5, pc6 = st.columns(6)
+        pc1.metric("1M Return", f"{perf.get('return_1M', 0):+.1f}%" if perf.get('return_1M') is not None else "N/A")
+        pc2.metric("3M Return", f"{perf.get('return_3M', 0):+.1f}%" if perf.get('return_3M') is not None else "N/A")
+        pc3.metric("6M Return", f"{perf.get('return_6M', 0):+.1f}%" if perf.get('return_6M') is not None else "N/A")
+        pc4.metric("1Y Return", f"{perf.get('return_1Y', 0):+.1f}%" if perf.get('return_1Y') is not None else "N/A")
+        pc5.metric("3Y CAGR", f"{perf.get('return_3Y', 0):+.1f}%" if perf.get('return_3Y') is not None else "N/A")
+        pc6.metric("5Y CAGR", f"{perf.get('return_5Y', 0):+.1f}%" if perf.get('return_5Y') is not None else "N/A")
+
+        st.markdown("---")
+        st.markdown("### Risk Metrics")
+        rc1, rc2, rc3, rc4, rc5 = st.columns(5)
+        rc1.metric("Sharpe Ratio", f"{risk.get('sharpe_ratio', 0):.2f}")
+        rc2.metric("Sortino Ratio", f"{risk.get('sortino_ratio', 0):.2f}" if risk.get('sortino_ratio') is not None else "N/A")
+        rc3.metric("Max Drawdown", f"{risk.get('max_drawdown', 0):.1f}%")
+        rc4.metric("Std Dev (Ann.)", f"{risk.get('std_dev_annual', 0):.1f}%")
+        rc5.metric("Positive Days", f"{risk.get('positive_days_pct', 0):.0f}%")
+
+        if risk.get("best_month") is not None:
+            rc_extra1, rc_extra2, rc_extra3, rc_extra4 = st.columns(4)
+            rc_extra1.metric("Best Day", f"{risk.get('best_day', 0):+.2f}%")
+            rc_extra2.metric("Worst Day", f"{risk.get('worst_day', 0):+.2f}%")
+            rc_extra3.metric("Best Month", f"{risk.get('best_month', 0):+.1f}%")
+            rc_extra4.metric("Worst Month", f"{risk.get('worst_month', 0):+.1f}%")
+
+        # ── SIP vs Lumpsum Calculator ────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### SIP vs Lumpsum Calculator")
+        st.caption("Historical comparison: Rs.10,000/month SIP vs equivalent lumpsum")
+
+        sip_tabs = st.tabs(["1 Year", "3 Years", "5 Years"])
+        for tab, label in zip(sip_tabs, ["1Y", "3Y", "5Y"]):
+            with tab:
+                sip_data = sip.get(f"sip_{label}")
+                lump_data = sip.get(f"lumpsum_{label}")
+
+                if sip_data:
+                    sc1, sc2 = st.columns(2)
+                    with sc1:
+                        st.markdown("**SIP (Systematic)**")
+                        st.metric("Total Invested", f"Rs.{sip_data['total_invested']:,}")
+                        st.metric("Current Value", f"Rs.{sip_data['current_value']:,}")
+                        ret_color = "normal" if sip_data['total_return_pct'] >= 0 else "inverse"
+                        st.metric("Total Return", f"{sip_data['total_return_pct']:+.1f}%", delta_color=ret_color)
+                        st.metric("XIRR (Approx)", f"{sip_data['xirr_approx']:+.1f}%")
+
+                    with sc2:
+                        if lump_data:
+                            st.markdown("**Lumpsum**")
+                            st.metric("Total Invested", f"Rs.{lump_data['total_invested']:,}")
+                            st.metric("Current Value", f"Rs.{lump_data['current_value']:,}")
+                            ret_color = "normal" if lump_data['total_return_pct'] >= 0 else "inverse"
+                            st.metric("Total Return", f"{lump_data['total_return_pct']:+.1f}%", delta_color=ret_color)
+                            st.metric("CAGR", f"{lump_data['cagr']:+.1f}%")
+
+                    # Winner indicator
+                    if lump_data:
+                        sip_ret = sip_data['total_return_pct']
+                        lump_ret = lump_data['total_return_pct']
+                        if sip_ret > lump_ret:
+                            st.success(f"SIP wins by {sip_ret - lump_ret:.1f}% over {label}")
+                        elif lump_ret > sip_ret:
+                            st.warning(f"Lumpsum wins by {lump_ret - sip_ret:.1f}% over {label}")
+                        else:
+                            st.info("SIP and Lumpsum gave equal returns")
+                else:
+                    st.info(f"Insufficient data for {label} analysis")
+
+        # ── Future Projections ───────────────────────────────────────────
+        if proj:
+            st.markdown("---")
+            st.markdown("### Future Projections (SIP vs Lumpsum)")
+            st.caption("Based on historical CAGR — 3 scenarios: Bull, Base, Bear")
+
+            proj_tabs = st.tabs(["1 Year Projection", "3 Year Projection", "5 Year Projection"])
+            for tab, label in zip(proj_tabs, ["1Y", "3Y", "5Y"]):
+                with tab:
+                    period_proj = proj.get(label, {})
+                    if not period_proj:
+                        st.info(f"No projection data for {label}")
+                        continue
+
+                    # Create comparison table
+                    proj_rows = []
+                    for scenario in ["bull", "base", "bear"]:
+                        s = period_proj.get(scenario, {})
+                        if s:
+                            proj_rows.append({
+                                "Scenario": scenario.upper(),
+                                "Expected CAGR": f"{s.get('expected_return_pct', 0):+.1f}%",
+                                "Projected NAV": f"Rs.{s.get('projected_nav', 0):,.2f}",
+                                "SIP Invested": f"Rs.{s.get('sip_invested', 0):,}",
+                                "SIP Value": f"Rs.{s.get('sip_value', 0):,}",
+                                "SIP Return": f"{s.get('sip_return_pct', 0):+.1f}%",
+                                "Lumpsum Value": f"Rs.{s.get('lumpsum_value', 0):,}",
+                                "Lumpsum Return": f"{s.get('lumpsum_return_pct', 0):+.1f}%",
+                            })
+
+                    if proj_rows:
+                        st.dataframe(pd.DataFrame(proj_rows), use_container_width=True, hide_index=True)
+
+                    # Visual chart
+                    bull = period_proj.get("bull", {})
+                    base = period_proj.get("base", {})
+                    bear = period_proj.get("bear", {})
+                    if bull and base and bear:
+                        fig = go.Figure()
+                        scenarios = ["Bear", "Base", "Bull"]
+                        sip_vals = [bear.get("sip_value", 0), base.get("sip_value", 0), bull.get("sip_value", 0)]
+                        lump_vals = [bear.get("lumpsum_value", 0), base.get("lumpsum_value", 0), bull.get("lumpsum_value", 0)]
+                        invested = base.get("sip_invested", 0)
+
+                        fig.add_trace(go.Bar(name="SIP", x=scenarios, y=sip_vals, marker_color="#87A878"))
+                        fig.add_trace(go.Bar(name="Lumpsum", x=scenarios, y=lump_vals, marker_color="#D4A574"))
+                        fig.add_hline(y=invested, line_dash="dash", line_color="#B76E79",
+                                      annotation_text=f"Invested: Rs.{invested:,}")
+                        fig.update_layout(**CHART_LAYOUT, barmode="group", height=400,
+                                          title=f"{label} Projected Values")
+                        st.plotly_chart(fig, use_container_width=True)
+
+        st.stop()  # End here for MF — skip stock-specific quant sections below
+
     current_price = summary.get("current_price") or valuations.get("current_price", 0)
     fair_value = valuations.get("composite_fair_value")
     upside = valuations.get("composite_upside")
@@ -1449,6 +1580,129 @@ elif page == "Consensus Heatmap":
             buy_pct = sum(1 for a in ticker_data if "BUY" in a["Verdict"]) / max(len(ticker_data), 1) * 100
             avg = sum(a["Score"] for a in ticker_data) / max(len(ticker_data), 1)
             st.markdown(f"**{ticker}**: {buy_pct:.0f}% bullish | Avg: {avg:.1f}/10 | {report.get('overall_verdict', 'N/A')}")
+
+
+# ==============================================================================
+# PAGE: FUTURE OUTLOOK
+# ==============================================================================
+
+elif page == "Future Outlook":
+    st.markdown('<p class="hero-text">Future Outlook</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-sub">AI-POWERED MACRO ANALYSIS | SECTOR ROTATION | MARKET FORECAST</p>', unsafe_allow_html=True)
+
+    from agents.outlook import get_latest_outlook, generate_market_outlook
+
+    # Refresh button
+    _has_keys = bool(os.environ.get("GEMINI_API_KEYS") or os.environ.get("GEMINI_LITE_API_KEY") or os.environ.get("GROQ_API_KEYS"))
+    _ro = os.environ.get("SHARE_READ_ONLY", "") == "1" or not _has_keys
+
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        st.markdown("### Market Intelligence Outlook")
+    with col_btn:
+        if _ro:
+            st.button("Refresh Outlook", disabled=True, help="Disabled in read-only mode")
+        else:
+            if st.button("Refresh Outlook", type="primary", key="refresh_outlook"):
+                with st.spinner("Running 5 outlook agents... (takes ~30 seconds)"):
+                    try:
+                        generate_market_outlook()
+                        st.success("Outlook updated!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    outlook_data = get_latest_outlook()
+
+    if not outlook_data:
+        st.info("No outlook generated yet. Click 'Refresh Outlook' to run the AI macro analysis agents.")
+        st.markdown("""
+        **What this does:**
+        - 5 specialized AI agents analyze the current macro environment
+        - Global Macro Strategist, India Economy Analyst, Sector Rotation Strategist,
+          Market Technicals Forecaster, and MF & Investment Flows Analyst
+        - Produces sector-level buy/sell recommendations and market scenarios
+        - Provides context for understanding individual stock/fund analyses
+        """)
+        st.stop()
+
+    outlook = outlook_data.get("outlook_json", {})
+    if isinstance(outlook, str):
+        import json as _json
+        outlook = _json.loads(outlook)
+
+    generated_at = outlook.get("generated_at", "Unknown")
+    st.caption(f"Last updated: {generated_at[:19].replace('T', ' ')} UTC")
+
+    # Overall sentiment
+    overall = outlook.get("overall_outlook", "NEUTRAL")
+    bull_n = outlook.get("bull_count", 0)
+    bear_n = outlook.get("bear_count", 0)
+    neutral_n = outlook.get("neutral_count", 0)
+
+    oc1, oc2, oc3, oc4 = st.columns(4)
+    overall_color = {"BULLISH": "#87A878", "BEARISH": "#B76E79", "NEUTRAL": "#D4A574"}.get(overall, "#D4A574")
+    oc1.markdown(f"<div style='text-align:center; padding:10px; background:rgba(0,0,0,0.3); border-radius:8px;'>"
+                 f"<span style='color:{overall_color}; font-size:24px; font-weight:bold;'>{overall}</span><br>"
+                 f"<span style='color:#8B8589; font-size:12px;'>Overall Outlook</span></div>", unsafe_allow_html=True)
+    oc2.metric("Bullish Agents", f"{bull_n}/{bull_n + bear_n + neutral_n}")
+    oc3.metric("Bearish Agents", f"{bear_n}/{bull_n + bear_n + neutral_n}")
+    oc4.metric("Neutral Agents", f"{neutral_n}/{bull_n + bear_n + neutral_n}")
+
+    # Top sectors
+    bull_sectors = outlook.get("top_bullish_sectors", [])
+    bear_sectors = outlook.get("top_bearish_sectors", [])
+
+    if bull_sectors or bear_sectors:
+        st.markdown("---")
+        st.markdown("### Sector Outlook")
+        sec1, sec2 = st.columns(2)
+        with sec1:
+            st.markdown("**Sectors to WATCH (Bullish)**")
+            for s in bull_sectors:
+                st.success(f"{s}")
+        with sec2:
+            st.markdown("**Sectors to AVOID (Bearish)**")
+            for s in bear_sectors:
+                st.error(f"{s}")
+
+    # Individual agent analyses
+    agent_results = outlook.get("agent_results", {})
+    if agent_results:
+        st.markdown("---")
+        st.markdown("### Detailed Agent Analyses")
+
+        for role, result in agent_results.items():
+            name = result.get("name", role)
+            agent_outlook = result.get("outlook", "NEUTRAL")
+            confidence = result.get("confidence", 0)
+            headline = result.get("headline", "")
+            analysis = result.get("analysis", "")
+            key_points = result.get("key_points", [])
+            risks = result.get("risks", [])
+            opportunities = result.get("opportunities", [])
+
+            outlook_icon = {"BULLISH": "**BULLISH**", "BEARISH": "**BEARISH**", "NEUTRAL": "**NEUTRAL**"}.get(agent_outlook, agent_outlook)
+
+            with st.expander(f"{name} — {outlook_icon} ({confidence:.0%} confidence) | {headline}", expanded=False):
+                st.markdown(analysis)
+
+                if key_points:
+                    st.markdown("**Key Points:**")
+                    for pt in (key_points if isinstance(key_points, list) else [key_points]):
+                        st.markdown(f"- {pt}")
+
+                kc1, kc2 = st.columns(2)
+                with kc1:
+                    if opportunities:
+                        st.markdown("**Opportunities:**")
+                        for o in (opportunities if isinstance(opportunities, list) else [opportunities]):
+                            st.success(o)
+                with kc2:
+                    if risks:
+                        st.markdown("**Risks:**")
+                        for r in (risks if isinstance(risks, list) else [risks]):
+                            st.error(r)
 
 
 # ==============================================================================

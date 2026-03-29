@@ -140,14 +140,36 @@ def analyze_single_stock(ticker: str, progress_callback=None, stop_flag: threadi
         results["scan_id"] = scan_id
         print(f"  [Pipeline] scan_id={scan_id} saved for {ticker}")
 
-        # Step 3: Run quant engine
+        # Step 3: Run quant engine (stock) or MF quant engine (mutual fund)
         report(3, 7, "Running quantitative prediction engine...")
         try:
-            quant = run_quant_engine(ticker)
-            if quant and not quant.get("error"):
-                save_quant_predictions(scan_id, ticker, quant)
-                print(f"  [Pipeline] Quant predictions saved for {ticker}")
-            results["quant"] = quant
+            from scanner.universe import is_mutual_fund as _is_mf_check
+            if _is_mf_check(ticker):
+                from quant.mf_engine import compute_mf_quant
+                mf_quant = compute_mf_quant(ticker)
+                if mf_quant and not mf_quant.get("error"):
+                    # Save MF quant as quant_predictions (reuse same table)
+                    mf_quant_data = {
+                        "valuations": {"type": "mutual_fund", "nav": mf_quant.get("performance", {}).get("current_nav", 0)},
+                        "levels": mf_quant.get("risk", {}),
+                        "predictions": mf_quant.get("projections", {}),
+                        "summary": {
+                            "type": "mutual_fund",
+                            "performance": mf_quant.get("performance", {}),
+                            "risk": mf_quant.get("risk", {}),
+                            "sip_analysis": mf_quant.get("sip_analysis", {}),
+                            "projections": mf_quant.get("projections", {}),
+                        },
+                    }
+                    save_quant_predictions(scan_id, ticker, mf_quant_data)
+                    print(f"  [Pipeline] MF quant predictions saved for {ticker}")
+                results["quant"] = mf_quant
+            else:
+                quant = run_quant_engine(ticker)
+                if quant and not quant.get("error"):
+                    save_quant_predictions(scan_id, ticker, quant)
+                    print(f"  [Pipeline] Quant predictions saved for {ticker}")
+                results["quant"] = quant
         except AnalysisCancelled:
             raise
         except Exception as e:
